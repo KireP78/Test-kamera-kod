@@ -1,0 +1,2165 @@
+<!DOCTYPE html>
+<html lang="mk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>FORMA — AI Тренер за форма</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+<style>
+  :root{
+    --black:#070707;
+    --white:#F5F2EA;
+    --gold:#FFD700;
+    --gold-soft:#C9A24B;
+    --red:#FF0033;
+    --muted:rgba(245,242,234,.55);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+  body{
+    background:var(--black);
+    color:var(--white);
+    font-family:Inter,"Helvetica Neue",Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    -webkit-tap-highlight-color:transparent;
+  }
+  video{display:none}
+
+  #canvas{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+
+  .scrim{position:fixed;left:0;right:0;pointer-events:none;z-index:2}
+  .scrim.top{top:0;height:140px;background:linear-gradient(to bottom,rgba(7,7,7,.7),transparent)}
+  .scrim.bottom{bottom:0;height:220px;background:linear-gradient(to top,rgba(7,7,7,.78),transparent)}
+
+  .ui{position:fixed;z-index:3}
+  .topbar{
+    top:calc(14px + env(safe-area-inset-top));left:0;right:0;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:0 18px;gap:14px;
+  }
+  .wordmark{font-size:14px;letter-spacing:.42em;font-weight:300;text-transform:uppercase;white-space:nowrap;flex:0 0 auto;overflow:visible}
+  .wordmark b{color:var(--gold-soft);font-weight:400}
+  .topbar select{flex:1 1 auto;min-width:0}
+
+  select{
+    appearance:none;-webkit-appearance:none;
+    background:rgba(7,7,7,.45);
+    -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+    color:var(--white);
+    border:1px solid rgba(201,162,75,.45);border-radius:999px;
+    padding:10px 38px 10px 16px;font-size:13px;letter-spacing:.04em;cursor:pointer;
+    max-width:62vw;text-overflow:ellipsis;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7'><path d='M1 1l4 4 4-4' fill='none' stroke='%23C9A24B' stroke-width='1.4' stroke-linecap='round'/></svg>");
+    background-repeat:no-repeat;background-position:right 15px center;
+  }
+  select:focus{outline:none;border-color:var(--gold-soft)}
+
+  .bottombar{
+    bottom:calc(18px + env(safe-area-inset-bottom));left:0;right:0;
+    display:flex;flex-direction:column;align-items:center;gap:5px;
+    padding:0 20px;text-align:center;
+  }
+  .reps-label{font-size:10px;letter-spacing:.34em;text-transform:uppercase;color:var(--muted)}
+  #repCount{
+    font-size:clamp(64px,18vw,104px);font-weight:200;line-height:1;
+    color:var(--gold-soft);font-variant-numeric:tabular-nums;
+    text-shadow:0 0 24px rgba(201,162,75,.25);
+  }
+  #statusText{
+    min-height:24px;font-size:clamp(14px,4vw,18px);font-weight:600;
+    letter-spacing:.08em;text-transform:uppercase;transition:color .2s ease;
+  }
+  #statusText.good{color:var(--gold);text-shadow:0 0 16px rgba(255,215,0,.4)}
+  #statusText.bad{color:var(--red);text-shadow:0 0 16px rgba(255,0,51,.5)}
+
+  .controls{display:flex;gap:10px;margin-top:10px}
+  button{
+    pointer-events:auto;padding:11px 26px;border-radius:999px;
+    background:rgba(7,7,7,.45);
+    -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+    color:var(--gold-soft);border:1px solid var(--gold-soft);
+    font-size:11px;letter-spacing:.24em;text-transform:uppercase;cursor:pointer;
+    transition:background .2s,color .2s;
+  }
+  button:hover{background:var(--gold-soft);color:var(--black)}
+  button.secondary{border-color:rgba(245,242,234,.3);color:var(--white)}
+  button:disabled{opacity:.4}
+  button:focus-visible,select:focus-visible{outline:2px solid var(--gold-soft);outline-offset:2px}
+
+  #intro{
+    position:fixed;inset:0;z-index:5;background:rgba(7,7,7,.82);
+    -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:22px;text-align:center;padding:32px;transition:opacity .5s ease;
+  }
+  #intro.hide{opacity:0;pointer-events:none}
+  #intro .wordmark{font-size:22px}
+  #intro p{color:var(--white);font-size:13px;line-height:1.7;max-width:330px;letter-spacing:.03em}
+
+  /* зелен fade при завршена калибрација — мине одозгора надолу */
+  #calibFlash{
+    position:fixed;inset:0;z-index:4;pointer-events:none;opacity:0;
+    background:linear-gradient(to bottom,
+      rgba(46,213,115,.55) 0%,
+      rgba(46,213,115,.32) 45%,
+      rgba(46,213,115,0) 100%);
+  }
+  #calibFlash.run{animation:calibSweep 1.05s ease-out forwards}
+  @keyframes calibSweep{
+    0%{opacity:0;transform:translateY(-100%)}
+    35%{opacity:1}
+    100%{opacity:0;transform:translateY(100%)}
+  }
+  /* суптилен зелен раб што пулсира еднаш — потврда „спремен“ */
+  #calibRing{
+    position:fixed;inset:0;z-index:4;pointer-events:none;opacity:0;
+    box-shadow:inset 0 0 0 3px rgba(46,213,115,.9),inset 0 0 40px rgba(46,213,115,.5);
+  }
+  #calibRing.run{animation:calibRing 1s ease-out forwards}
+  @keyframes calibRing{0%{opacity:0}20%{opacity:1}100%{opacity:0}}
+
+  /* --- AI ИЗВЕШТАЈ ПО СЕТ (премиум дизајн) --- */
+  #setReport{
+    position:fixed;inset:0;z-index:9;overflow-y:auto;
+    background:radial-gradient(120% 80% at 50% 0%,#0f0f10,#070707);
+    animation:srFade .4s ease;padding:22px 16px 40px;
+  }
+  @keyframes srFade{from{opacity:0}to{opacity:1}}
+  .srWrap{max-width:440px;margin:0 auto}
+  .srTitle{text-align:center;font-size:13px;letter-spacing:.18em;text-transform:uppercase;
+    color:#fff;font-weight:600;margin-bottom:2px}
+  .srTitleSub{text-align:center;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--gold);margin-bottom:20px}
+  .srPanel{background:linear-gradient(160deg,#161616,#0d0d0d);
+    border:1px solid rgba(255,255,255,.07);border-radius:20px;padding:18px;margin-bottom:14px}
+  .srPanel.gold{border-color:rgba(201,162,75,.4)}
+  /* заглавје со кружен прогрес */
+  .srTop{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .srDone b{font-size:15px;color:#fff;font-weight:600;display:block}
+  .srDone span{font-size:12px;color:var(--muted)}
+  .srRing{position:relative;width:120px;height:120px;margin:6px auto 2px}
+  .srRing svg{transform:rotate(-90deg)}
+  .srRingTxt{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center}
+  .srRingTxt b{font-size:30px;font-weight:700;line-height:1}
+  .srRingTxt span{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-top:3px}
+  .srRingTxt .grd{font-size:10px;letter-spacing:.1em;margin-top:2px;font-weight:600}
+  .srPanelHead{font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);text-align:center;margin:14px 0 12px;font-weight:600}
+  /* редови во резиме */
+  .srItem{display:flex;align-items:center;gap:12px;padding:11px 0;
+    border-bottom:1px solid rgba(255,255,255,.06)}
+  .srItem:last-child{border-bottom:none}
+  .srIcon{width:30px;height:30px;flex:0 0 auto;border-radius:9px;
+    display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.05)}
+  .srItemTxt{flex:1}
+  .srItemTxt b{display:block;font-size:13px;color:#fff;font-weight:600;letter-spacing:.02em}
+  .srItemTxt span{font-size:12px;color:var(--muted);line-height:1.4}
+  .srStat{font-size:11px;font-weight:600;letter-spacing:.06em;flex:0 0 auto;text-align:right}
+  .srCheck{width:22px;height:22px;border-radius:50%;flex:0 0 auto;
+    display:flex;align-items:center;justify-content:center;font-size:13px}
+  .srConfRow{display:flex;justify-content:space-between;align-items:center;
+    margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.1)}
+  .srConfRow span{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .srConfRow b{font-size:16px;color:var(--gold);font-weight:700}
+  /* нумерирани картички со силуета */
+  .srFix{display:flex;gap:12px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+  .srFix:last-child{border-bottom:none}
+  .srFixNum{width:24px;height:24px;border-radius:7px;flex:0 0 auto;
+    display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+  .srFixBody{flex:1}
+  .srFixTitle{font-size:13px;font-weight:700;letter-spacing:.04em;margin-bottom:5px}
+  .srFixText{font-size:12px;color:var(--muted);line-height:1.5}
+  .srFixSil{width:78px;flex:0 0 auto;display:flex;align-items:center;justify-content:center}
+  .srFixSil svg{width:100%;height:auto}
+  /* детални метрики grid */
+  .srMetrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:4px}
+  .srMetric{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);
+    border-radius:13px;padding:12px 8px;text-align:center}
+  .srMetric .mLabel{font-size:8.5px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--muted);line-height:1.35;min-height:23px;display:flex;align-items:center;justify-content:center}
+  .srMetric .mVal{font-size:22px;font-weight:700;margin:5px 0 2px}
+  .srMetric .mTag{font-size:8.5px;letter-spacing:.08em;text-transform:uppercase}
+  .srNote{font-size:10px;color:var(--muted);line-height:1.5;margin-top:10px;opacity:.8}
+  .srBtns{display:flex;gap:12px;margin-top:18px}
+  #srClose{flex:1;padding:15px;border:none;border-radius:16px;
+    background:var(--gold);color:#1a1a1a;font-weight:700;font-size:14px;
+    letter-spacing:.1em;text-transform:uppercase;cursor:pointer}
+
+  /* --- ДЕМО ПРОЗОРЕЦ: правилна форма на repeat (долу лево) --- */
+  #demoBox{
+    position:fixed;z-index:3;
+    left:14px;
+    top:calc(20px + env(safe-area-inset-top));
+    width:132px;height:188px;border-radius:18px;overflow:hidden;
+    background:#000;
+    border:1px solid rgba(201,162,75,.55);
+    box-shadow:0 8px 26px rgba(0,0,0,.5);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    transition:opacity .3s ease, transform .3s ease;
+  }
+  #demoBox.hidden{opacity:0;transform:translateY(-8px) scale(.96);pointer-events:none}
+  #demoVideo{width:100%;height:100%;object-fit:cover;display:block;background:#0a0a0a}
+  #demoBox .demoLabel{
+    position:absolute;left:0;right:0;top:0;padding:6px 8px;
+    font-size:9px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--gold);background:linear-gradient(to bottom,rgba(7,7,7,.85),transparent);
+    pointer-events:none;
+  }
+  #demoBox .demoEmpty{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    text-align:center;padding:10px;
+    font-size:10px;line-height:1.5;color:var(--muted);letter-spacing:.02em;
+  }
+  /* мало копче за криење/покажување на демото */
+  #demoToggle{
+    position:absolute;right:5px;bottom:5px;z-index:2;
+    width:22px;height:22px;border-radius:50%;border:none;
+    background:rgba(7,7,7,.6);color:var(--gold);font-size:13px;line-height:1;
+    cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center;
+  }
+</style>
+</head>
+<body>
+
+<video id="video" playsinline></video>
+<canvas id="canvas"></canvas>
+
+<div id="calibFlash"></div>
+<div id="calibRing"></div>
+
+<div class="scrim top"></div>
+<div class="scrim bottom"></div>
+
+<!-- топбарот е тргнат од екранот; изборот на вежба ќе биде посебен.
+     select-от останува скриен за да работи постоечката логика (default: чучањ) -->
+<select id="exercise" style="display:none">
+  <option value="squat">Чучневи со шипка</option>
+  <option value="deadlift">Мртво кревање</option>
+  <option value="curl">Бицепс преглед</option>
+</select>
+
+<div class="ui bottombar">
+  <div class="reps-label">Повторувања · <span id="viewBadge">профил</span></div>
+  <div id="repCount">0</div>
+  <div id="statusText">Подготвен</div>
+  <div class="controls">
+    <button id="soundBtn">🔊 Глас</button>
+    <button id="langBtn" class="secondary">МК</button>
+    <button id="resetBtn" class="secondary">Ресет</button>
+  </div>
+</div>
+
+<!-- ДЕМО ПРОЗОРЕЦ: правилна форма на repeat -->
+<div id="demoBox">
+  <div class="demoLabel">Правилна форма</div>
+  <video id="demoVideo" muted loop playsinline autoplay></video>
+  <div class="demoEmpty" id="demoEmpty">Стави демо<br>видео</div>
+  <button id="demoToggle" title="Скриј/прикажи">▾</button>
+</div>
+
+<div id="intro">
+  <div class="wordmark">FOR<b>MA</b></div>
+  <p>Тапни за да ја вклучиш камерата</p>
+  <button id="startBtn">Вклучи камера</button>
+</div>
+
+<script>
+/* =====================================================================
+   FORMA v13 — Setup gate (Фаза 1) + Auto-View (профил/предна поза)
+   ---------------------------------------------------------------------
+   Над v12 додадено:
+     1. ФАЗА 1 (SETUP) → пред детекција, целото тело мора да е чисто
+        во кадар ~1.2с. Дотогаш само води инструкции („намести камера“).
+     2. AUTO-VIEW → ширина рамена/торзо разликува профил од предна
+        поза (со хистереза против трепкање) и автоматски ја менува
+        логиката.
+     3. FRONT VIEW → Knee Valgus (колена навнатре <90% од ширина
+        стапала) и Hip Shift (асиметрично спуштање). Бројач преку
+        вертикално движење на колкот.
+   Претходно (v10–v12): edge-case финиши за Barbell Squat
+   ---------------------------------------------------------------------
+   Над v9 ('рбет без EAR) додадени три поправки:
+     1. UI ФИКС → брендот „FORMA“ заштитен од стискање во flex
+        (порано се сечеше како „ЗА МА“ кога select-от е широк).
+     2. SAFETY SWITCH → ако клучните точки имаат доверба <0.75 или
+        телото е преблиску/делумно надвор → пауза на детекција и
+        бројач, само порака „Влези во кадар…“.
+     3. WARMUP SMOOTHING → првите 2с засилено мазнење (α 0.18) и на
+        аглите и на пикселните позиции → елегантен скелет од прв кадар.
+===================================================================== */
+
+'use strict';
+
+// ---------- DOM ----------
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const repEl=document.getElementById('repCount');
+const statusEl=document.getElementById('statusText');
+const exerciseSel=document.getElementById('exercise');
+const startBtn=document.getElementById('startBtn');
+const resetBtn=document.getElementById('resetBtn');
+const soundBtn=document.getElementById('soundBtn');
+const langBtn=document.getElementById('langBtn');
+const intro=document.getElementById('intro');
+const viewBadge=document.getElementById('viewBadge');
+const demoBox=document.getElementById('demoBox');
+const demoVideo=document.getElementById('demoVideo');
+const demoEmpty=document.getElementById('demoEmpty');
+const demoToggle=document.getElementById('demoToggle');
+
+/* мапа: вежба → демо видео фајл (стави ги овие фајлови покрај HTML-от) */
+const DEMO_SRC={
+  squat:'demo_squat.mp4',
+  deadlift:'demo_deadlift.mp4',
+  curl:'demo_curl.mp4'
+};
+function loadDemo(ex){
+  const src=DEMO_SRC[ex];
+  if(!src){demoVideo.removeAttribute('src');demoEmpty.style.display='flex';return;}
+  demoVideo.src=src;
+  demoVideo.load();
+  // ако фајлот не постои → прикажи fallback порака
+  demoVideo.onloadeddata=()=>{demoEmpty.style.display='none';demoVideo.play().catch(()=>{});};
+  demoVideo.onerror=()=>{demoEmpty.style.display='flex';};
+}
+let demoHidden=false;
+demoToggle.addEventListener('click',()=>{
+  demoHidden=!demoHidden;
+  demoBox.classList.toggle('hidden',demoHidden);
+  demoToggle.textContent=demoHidden?'▴':'▾';
+});
+const calibFlash=document.getElementById('calibFlash');
+const calibRing=document.getElementById('calibRing');
+
+function playCalibFlash(){
+  for(const el of [calibFlash,calibRing]){
+    if(!el)continue;
+    el.classList.remove('run');
+    void el.offsetWidth;        // рестартирај ја анимацијата
+    el.classList.add('run');
+  }
+}
+
+/* =====================================================================
+   VOICE — гласовни команди за црвени грешки (Web Speech API)
+   ---------------------------------------------------------------------
+   • Зборува САМО кога ќе се појави НОВА грешка (или се смени).
+   • Cooldown спречува спам ако грешката трепка.
+   • Двојазично: македонски / англиски (прекинувач).
+   • LAZY init — не чита CFG при создавање (CFG се дефинира подоцна).  */
+const Voice=(()=>{
+  const synth=window.speechSynthesis||null;
+  let lastSpokeAt=0, voiceObj=null;
+  let enabled=true, lang='mk';     // се синхронизира од CFG при init()
+
+  // кратки команди по клуч на грешка, на двата јазика
+  const PHRASES={
+    mk:{
+      sqLean:'Исправи го грбот', dlBack:'Исправи го грбот',
+      sqHeel:'Цела стапка', sqKneeFwd:'Колената назад',
+      sqShallow:'Подлабоко', sqValgus:'Отвори ги колената',
+      sqHipShift:'Рамно на двете нозе', dlEarlyKnee:'Прво колената',
+      sqNeck:'Неутрален врат', clLazy:'Целосно долу', clElbowFwd:'Стабилни лакти'
+    },
+    en:{
+      sqLean:'Straighten your back', dlBack:'Straighten your back',
+      sqHeel:'Full foot down', sqKneeFwd:'Knees back',
+      sqShallow:'Go deeper', sqValgus:'Push knees out',
+      sqHipShift:'Stay even', dlEarlyKnee:'Hips first',
+      sqNeck:'Neutral neck', clLazy:'Full extension', clElbowFwd:'Stable elbows'
+    }
+  };
+  const LANGTAG={mk:'mk-MK',en:'en-US'};
+  const JOIN={mk:' и ',en:' and '};       // сврзник меѓу две грешки
+  const REPEAT_MS=4500;                   // пауза пред да ја ПОВТОРИ истата грешка
+  const MIN_GAP_MS=2200;                  // минимум пауза меѓу БИЛО КОИ две команди
+                                          // (дури и кога грешката се менува)
+  let lastSpokenSig=null;                       // потпис на последно кажаните грешки
+
+  function pickVoice(){
+    if(!synth)return;
+    const vs=synth.getVoices();
+    const want=lang==='mk'?/mk|mac/i:/en/i;
+    voiceObj=vs.find(v=>want.test(v.lang))
+           ||(lang==='mk'?vs.find(v=>/sr|hr|bs/i.test(v.lang)):null)
+           ||null;
+  }
+  if(synth&&synth.onvoiceschanged!==undefined)synth.onvoiceschanged=pickVoice;
+
+  function speak(text){
+    if(!synth)return;
+    const u=new SpeechSynthesisUtterance(text);
+    u.lang=LANGTAG[lang];
+    u.rate=1.08;
+    if(voiceObj)u.voice=voiceObj;
+    synth.cancel();
+    synth.speak(u);
+  }
+
+  return{
+    get on(){return enabled;},
+    get lang(){return lang;},
+    init(cfg){ enabled=!!cfg.enabled; lang=cfg.lang==='en-US'?'en':'mk'; pickVoice(); },
+    setEnabled(v){ enabled=v; if(!v&&synth){synth.cancel();lastSpokenSig=null;} },
+    setLang(l){ lang=l==='en'?'en':'mk'; pickVoice(); lastSpokenSig=null; },
+
+    /* прима ЛИСТА на активни црвени грешки (сортирани по приоритет) */
+    update(keys,t){
+      if(!enabled||!synth)return;
+      if(!keys||!keys.length){ lastSpokenSig=null; return; }
+
+      // најмногу две команди заедно (повеќе би било преоптоварено)
+      const top=keys.slice(0,2).map(k=>PHRASES[lang][k]).filter(Boolean);
+      if(!top.length){ return; }
+      const phrase=top.join(JOIN[lang]);
+      const sig=keys.slice(0,2).join('+');   // потпис: кои грешки се активни
+
+      const changed=sig!==lastSpokenSig;      // се разликува од ПОСЛЕДНО кажаното
+      const sinceSpoke=t-lastSpokeAt;
+      const minGapOk=sinceSpoke>=MIN_GAP_MS;   // мин. пауза меѓу било кои две
+      const cooled=sinceSpoke>=REPEAT_MS;      // пауза за повторување на иста
+
+      // зборувај ако: (друга грешка И помина мин. паузата) ИЛИ
+      // (истата грешка но помина целата пауза за повторување).
+      if((changed&&minGapOk)||(!changed&&cooled)){
+        speak(phrase);
+        lastSpokeAt=t;
+        lastSpokenSig=sig;
+      }
+    },
+    reset(){lastSpokenSig=null;lastSpokeAt=0;}
+  };
+})();
+
+// ---------- MediaPipe индекси ----------
+const LM={
+  NOSE:0,
+  EAR_L:7, EAR_R:8,
+  SHO_L:11, SHO_R:12,
+  ELB_L:13, ELB_R:14,
+  WRI_L:15, WRI_R:16,
+  HIP_L:23, HIP_R:24,
+  KNE_L:25, KNE_R:26,
+  ANK_L:27, ANK_R:28,
+  HEEL_L:29, HEEL_R:30,
+  FOOT_L:31, FOOT_R:32
+};
+
+// =====================================================================
+// КОНФИГУРАЦИЈА
+// =====================================================================
+const CFG={
+  smoothing:0.35,
+  visMin:0.5,
+  fadeMs:250,
+  hipVelThresh:-1.4,
+
+  // позициони грешки: ≥5 кадри за вклучување/исклучување
+  debounce:{on:5,off:5},
+  // КРИТИЧНИ (безбедносни) грешки: побрз окидач — 3 кадри
+  safetyDebounce:{on:3,off:5},
+  // злато: брз влез (2), стабилен излез (3)
+  goldDebounce:{on:2,off:3},
+
+  /* --- v10: SAFETY SWITCH + WARMUP --- */
+  safety:{
+    minConfidence:0.75,     // праг на видливост за клучните точки
+    warmupMs:2000,          // засилено мазнење во првите 2с
+    warmupSmoothing:0.18    // помал α = помазно (наспроти 0.35 нормално)
+  },
+
+  /* --- v16: TORSO-LEAN ANGLE (наклон на SHOULDER→HIP од вертикала) --- */
+  spine:{
+    leanBase:26,            // дозволен наклон напред над baseline (°) во
+                            // плитка фаза — нормално спуштање не е грешка
+    leanDeepExtra:12,       // +12° дополнителна дозвола во најдолната точка
+                            // (длабок чучањ → торзото природно паѓа напред)
+    leanAbsMax:46,          // АПСОЛУТЕН лимит (°) независен од baseline —
+                            // фаќа згрбавеност дури и при лоша калибрација
+    lockFrames:45,          // по ~1.5с стабилен став, baseline се заклучува
+    calibRate:0.05,         // бавна EMA за личниот baseline на наклонот
+    rotationLeanGain:30     // мала дозвола (°) при вртење кон камера
+  },
+
+  // визуелна реакција: стрелка изелува скоро инстантно (2 кадри)
+  instantDebounce:{on:2,off:5},
+  // колена: 4 кадри за палење (потврда со време), 10 за гасење
+  kneeDebounce:{on:4,off:10},
+  // долго држење за гасење на критични грешки → нула трепкање
+  holdOff:9,
+
+  // --- ГЛАСОВНИ КОМАНДИ (само црвени грешки) ---
+  voice:{
+    enabled:true,           // почетна состојба (има копче за вкл/искл)
+    lang:'mk-MK'            // 'mk-MK' или 'en-US' (има прекинувач)
+  },
+
+  squat:{
+    depthAngle:100,
+    upAngle:160,
+    deadzone:140,
+    kneeBufferRatio:0.40,   // основна толеранција: 40% (зголемена — помалку
+                            // лажни аларми при природно поместување напред)
+    deepAngle:110,
+    deepBufferExtra:0.30,   // +30% во длабока фаза (вкупно ~70%)
+    kneeHardCap:0.68,       // апсолутен таван само за ЕКСТРЕМНО напред
+    kneeMinConf:0.62,       // колена не се судат под овој confidence
+    leanCheckAbove:120,     // чистиот наклон се проверува САМО над 120°
+    trunkLeanMax:62,        // екстремен наклон во плитка фаза
+    heelLiftRatio:0.06,     // петицата подигната >6% од стапалото = тежина
+                            // префрлена напред на прстите → стрелка на стапало
+    goldSuppressFrames:5,   // суспензија на грешки по златна зона
+
+    /* --- TILT/CONFIDENCE: квалитет на детекцијата --- */
+    minConfidence:0.55,     // под ова → не суди, побарај подобра позиција
+    sideMaxRatio:0.45,      // ширина рамена/торзо над ова во ПРОФИЛ режим =
+                            // сомнителен агол (ни чист профил ни чист фронт)
+
+    /* --- ВРАТ v2 (neck-to-torso alignment, имуно на ротација) --- */
+    neckBase:15,            // безбеден опсег: ±15° природно движење БЕЗ аларм
+    neckDeepExtra:10,       // дополнителна дозвола во длабок чучањ
+    neckSevPerDeg:10,       // +1 severity на секои 10° над прагот (мазно)
+    neckConfirm:8,          // ЈАСНА + КОНТИНУИРАНА флексија: 8 кадри потврда
+                            // пред да пали → нула лажни аларми од моментарно
+                            // движење или гледање во екран
+
+    /* --- FRONT VIEW (предна поза) --- */
+    valgusRatio:0.94,       // width_knees < width_feet×0.94 → построго (валгус
+                            // се фаќа порано, попрецизно)
+    hipShiftRatio:0.07,     // |L_hip.y − R_hip.y| > 7% — построго (јасно
+                            // искривување/латерален наклон се фаќа)
+    lateralShiftRatio:0.10, // центар-рамена vs центар-колкови > 10% од стапала
+                            // → латерален наклон на трупот (се крива настрана)
+    frontDepthDrop:0.12     // колкот спуштен >12% од висина кадар = чучањ
+  },
+  deadlift:{earlyKneeBend:150,hipDown:115,hipUp:160},
+  curl:{flexedBelow:50,extendedAbove:150,lazyExtension:132,flexDelta:16,elbowDrift:0.45},
+
+  /* --- AUTO-VIEW: профил наспроти предна поза ---
+     Во профил рамената се преклопуваат → ширина/торзо е мала (~0.2–0.4).
+     Во предна поза е голема (~0.6–1.0). Прагот е намален за сигурно
+     препознавање на предната поза.                                    */
+  view:{
+    frontEnter:0.50,        // ширина рамена/торзо над ова → FRONT
+    frontExit:0.38,         // под ова → SIDE (хистереза против трепкање)
+    smooth:0.2              // EMA за стабилна детекција на поза
+  },
+  /* --- ФАЗА 1: SETUP / READINESS --- */
+  setup:{
+    minVis:0.7,             // сите клучни точки над оваа доверба
+    marginRatio:0.06,       // тело барем 6% од рабовите на кадар
+    holdMs:1200,            // одбројување „калибрирам“ откако телото е мирно
+    stableMoveMax:5,        // макс. движење на рамо/колк (px) за „мирно“
+    stableMs:1500           // телото мора да е мирно толку пред калибрација
+  }
+};
+
+// сега кога CFG постои, иницијализирај го гласовниот модул
+Voice.init(CFG.voice);
+
+const PRIORITY={
+  sqLean:1, dlBack:1, sqHeel:1, sqValgus:1,
+  sqNeck:2, sqShallow:2, dlEarlyKnee:2, clLazy:2, clElbowFwd:2, sqHipShift:2,
+  sqKneeFwd:3,
+  sqDeeper:5            // длабочински cue (насока) — пониско од сите грешки
+};
+
+const NEON_RED='#FF0033';
+const NEON_GOLD='#FFD700';
+
+// ---------- глобална состојба ----------
+let pose=null,camera=null,running=false;
+let reps=0;
+let smoothVals={},debounces={},st={};
+let pts=null;
+let fit={scale:1,offX:0,offY:0,vw:960,vh:720};
+let lastTs=performance.now();
+let prevHipY=null,hipVelY=0;
+let squatGoldActive=false;
+let errorSuppress=0;            // преостанати кадри на суспензија
+
+/* =====================================================================
+   СОБИРАЧ НА СТАТИСТИКА — за AI извештај по 10 повторувања
+   ---------------------------------------------------------------------
+   repAccum: акумулира метрики ВО ТЕКОТ на тековното повторување
+             (просеци, минимуми) — confidence-тежински за да не
+             влезат лажни кадри.
+   setReps:  низа завршени повторувања; кога ќе стигне 10 → извештај.   */
+let repAccum=null;
+let setReps=[];
+const SET_SIZE=10;
+
+function newRepAccum(){
+  return {minKneeAngle:180, sumLean:0, sumLeanW:0, sumConf:0, nConf:0,
+          sumKneeOver:0, nKnee:0, errFrames:{}, frames:0,
+          tStart:performance.now(), depthReached:false};
+}
+function repAccumFrame(kneeAngle,leanDelta,conf,kneeOverRatio,activeErrKeys){
+  if(!repAccum)repAccum=newRepAccum();
+  const a=repAccum;
+  a.frames++;
+  a.minKneeAngle=Math.min(a.minKneeAngle,kneeAngle);
+  if(conf>0){a.sumConf+=conf;a.nConf++;}
+  // lean тежински по confidence (лош кадар не влијае многу)
+  if(leanDelta!=null&&conf>0){a.sumLean+=leanDelta*conf;a.sumLeanW+=conf;}
+  if(kneeOverRatio!=null){a.sumKneeOver+=kneeOverRatio;a.nKnee++;}
+  if(kneeAngle<=110)a.depthReached=true;
+  // брои кадри по грешка САМО ако confidence е доволен (анти-лажни)
+  if(conf>=CFG.squat.minConfidence){
+    for(const k of activeErrKeys)a.errFrames[k]=(a.errFrames[k]||0)+1;
+  }
+}
+function finalizeRep(){
+  if(!repAccum||repAccum.frames<3){repAccum=null;return;}
+  const a=repAccum;
+  const conf=a.nConf?a.sumConf/a.nConf:0;
+  const avgLean=a.sumLeanW?a.sumLean/a.sumLeanW:0;
+  const avgKneeOver=a.nKnee?a.sumKneeOver/a.nKnee:0;
+  const durationMs=performance.now()-a.tStart;
+  // грешка се смета „реална“ ако траела доволен дел од повторувањето
+  const errPersist={};
+  for(const k in a.errFrames){
+    const frac=a.errFrames[k]/a.frames;
+    if(frac>=0.25)errPersist[k]=frac;   // мин. 25% од репот = конзистентна
+  }
+  setReps.push({
+    minKneeAngle:a.minKneeAngle, depthReached:a.depthReached,
+    conf, avgLean, avgKneeOver, durationMs, errPersist
+  });
+  repAccum=null;
+}
+let spineCalib={slope:null,shoW:null,neck:null,locked:false,frames:0}; // baseline: торзо-ратио + ширина рамена
+let _sideLock=null;        // стабилизатор на избор на профил-страна
+let squatConfLast=0;       // последна confidence (0..1) за прикажување
+let camStartTs=0;          // момент на стартување на камерата (за warmup)
+let viewMode='side';       // 'side' | 'front' (авто-детекција)
+let setupState='setup';    // 'setup' | 'ready' (Фаза 1 gate)
+let setupGoodSince=0;      // од кога позата е добра во setup
+let setupStableSince=0;    // од кога телото е МИРНО (стабилно во кадар)
+let setupPrevPos=null;     // претходни позиции за мерење движење
+let frontCalib={feetW:null,hipBaseY:null}; // baseline за предна поза
+
+function resetState(){
+  reps=0;smoothVals={};debounces={};
+  prevHipY=null;hipVelY=0;squatGoldActive=false;errorSuppress=0;
+  spineCalib={slope:null,shoW:null,neck:null,locked:false,frames:0};  // нова калибрација за нов корисник
+  _sideLock=null;            // ресетирај стабилизатор на страна
+  regionSev={spine:0,knees:0,hips:0,neck:0};  // ресетирај боење по сериозност
+  repAccum=null;setReps=[];   // ресетирај собирач на статистика
+  viewMode='side';
+  setupState='setup';setupGoodSince=0;
+  setupStableSince=0;setupPrevPos=null;
+  frontCalib={feetW:null,hipBaseY:null};
+  st={
+    squat:{phase:'up',minKnee:180,counted:false,frontPhase:'up'},
+    deadlift:{phase:'up'},
+    curl:{flexed:false,maxExt:0,warned:false}
+  };
+  FormErrors.clear();
+  if(typeof Voice!=='undefined')Voice.reset();
+  repEl.textContent='0';
+  setStatus(running?'Намести се во кадар…':'Подготвен','');
+}
+
+// =====================================================================
+// ГЕОМЕТРИСКИ HELPERS
+// =====================================================================
+function calculateAngle(A,B,C){
+  const v1x=A.x-B.x,v1y=A.y-B.y,v2x=C.x-B.x,v2y=C.y-B.y;
+  const dot=v1x*v2x+v1y*v2y;
+  const m=Math.hypot(v1x,v1y)*Math.hypot(v2x,v2y);
+  if(!m)return 180;
+  return Math.acos(Math.min(1,Math.max(-1,dot/m)))*180/Math.PI;
+}
+
+/* =====================================================================
+   MID-BACK DEVIATION — v9 (БЕЗ EAR; имуно на вртење на главата)
+   ---------------------------------------------------------------------
+   Геометрија: MediaPipe нема физички landmark за средина на 'рбетот,
+   а средната точка на векторот SHOULDER–HIP по дефиниција лежи НА
+   линијата. Затоа отстапувањето на MID_BACK се изведува МАТЕМАТИЧКИ:
+
+   • Кога 'рбетот е прав, тетивата (правата SHOULDER–HIP) е еднаква
+     на должината на торзото L (научена при калибрација).
+   • Кога 'рбетот се витка во лак (кифоза), тетивата c СЕ СКРАТУВА,
+     а средината на грбот излегува од оската за сагита h:
+         за кружен лак:  c ≈ L − 8h²/(3L)
+         ⇒  h ≈ √( 3·L·(L−c) / 8 )
+     h е токму хоризонталното отстапување на MID_BACK од идеалната
+     права линија во профил — без никаква точка од главата.
+   • Сè е нормализирано со должината на бутот (HIP–KNEE) за да биде
+     независно од далечината на камерата и резолуцијата.
+   • РОТАЦИСКА КОМПЕНЗАЦИЈА: ако ширината меѓу рамената расте над
+     калибрираната (вртење кон камерата), прагот се множи динамички
+     → погледот кон екранот не може да предизвика лажен аларм.
+   Враќа {devNorm, bentRaw} или null (нема baseline/точки).         */
+/* =====================================================================
+   SPINE (v16) — наклон на линијата SHOULDER→HIP во однос на вертикалата
+   ---------------------------------------------------------------------
+   Зошто наклон, не должина: при спуштање торзото природно се наведнува
+   напред; проекцијата на тетивата во профил се СКРАТУВА поради
+   перспектива дури и со прав грб → старата сагита метрика палеше лажен
+   аларм. Наклонот директно го мери што бараме.
+   • baseline_slope се учи при исправен став (калибрација).
+   • detlaLean = колку торзото е НАВАЛЕНО напред над baseline-от.
+   • Толеранцијата РАСТЕ линеарно со длабочината (depthTol 0→1) до +18°,
+     па нормалното наведнување во длабок чучањ НЕ е грешка; само
+     екстремен пад напред („Good Morning“) ја надминува границата.     */
+function validateSpine(emaKey,sho,hip,scaleRef,shoulderW,isStanding,depthTol){
+  if(!(vis(sho)&&vis(hip)))return null;
+
+  // наклон на торзото од вертикалата (степени). 0° = совршено исправено.
+  // dx = хоризонтално отстапување рамо↔колк; dy = вертикална должина торзо.
+  const dx=sho.x-hip.x;
+  const dy=Math.max(1,hip.y-sho.y);           // рамо е над колк → hip.y>sho.y
+  let lean=Math.atan2(Math.abs(dx),dy)*180/Math.PI;
+  // мазни го наклонот (брзо, 0.5) за стабилност без големо доцнење
+  if(smoothVals[emaKey+'Lean']==null)smoothVals[emaKey+'Lean']=lean;
+  smoothVals[emaKey+'Lean']+=0.5*(lean-smoothVals[emaKey+'Lean']);
+  lean=smoothVals[emaKey+'Lean'];
+
+  /* --- калибрација: учи го природниот наклон САМО додека не е заклучен ---
+     По доволно кадри стабилен исправен став, baseline-от се ЗАКЛУЧУВА, за
+     да не се „навикне“ на згрбавено држење ако корисникот стои лошо.      */
+  if(isStanding&&!spineCalib.locked){
+    spineCalib.slope=spineCalib.slope==null
+      ?lean
+      :spineCalib.slope+CFG.spine.calibRate*(lean-spineCalib.slope);
+    if(shoulderW!=null){
+      const wr=shoulderW/Math.max(1,scaleRef);
+      spineCalib.shoW=spineCalib.shoW==null
+        ?wr:spineCalib.shoW+CFG.spine.calibRate*(wr-spineCalib.shoW);
+    }
+    spineCalib.frames=(spineCalib.frames||0)+1;
+    if(spineCalib.frames>=CFG.spine.lockFrames)spineCalib.locked=true; // заклучи
+  }
+  if(spineCalib.slope==null)return null;       // нема baseline → не суди
+
+  // колку е навален напред НАД природниот baseline
+  const deltaLean=lean-spineCalib.slope;
+
+  // --- дозволен наклон: фиксен праг + динамичка длабочинска дозвола ---
+  let allow=CFG.spine.leanBase;                // основна дозвола (°)
+  if(depthTol)allow+=CFG.spine.leanDeepExtra*depthTol;  // +до 12° во длабоко
+
+  // ротациска компензација (вртење кон камера) — мала
+  if(shoulderW!=null&&spineCalib.shoW!=null){
+    const turn=Math.max(0,shoulderW/Math.max(1,scaleRef)-spineCalib.shoW);
+    allow+=CFG.spine.rotationLeanGain*turn;
+  }
+
+  /* АПСОЛУТЕН ЛИМИТ (независен од baseline): ако наклонот е драстично
+     голем, тоа е згрбавеност/пад напред дури и ако корисникот се
+     калибрирал лошо. Покрива случај кога baseline се фатил згрбавено. */
+  const absBent=lean>(CFG.spine.leanAbsMax+(depthTol?CFG.spine.leanDeepExtra*depthTol:0));
+
+  // severity 0..3: колку deltaLean навлегува над дозволеното (степени)
+  // 0 на праг, +1 на секои ~9° над — мазно за боење
+  let sev=0;
+  if(allow>0){
+    const over=deltaLean-allow*0.6;            // почни да жолти малку пред прагот
+    sev=clamp01(over/(allow*0.6))*1 + clamp01((deltaLean-allow)/9)*2;
+  }
+  if(absBent)sev=Math.max(sev,3);
+
+  return{deltaLean,lean,allow,sev:Math.min(3,sev),bentRaw:(deltaLean>allow)||absBent};
+}
+function dist(A,B){return Math.hypot(A.x-B.x,A.y-B.y);}
+
+/* =====================================================================
+   NECK v2 — neck-to-torso alignment, ИМУН на ротација на главата
+   ---------------------------------------------------------------------
+   ПРОБЛЕМ во старата верзија: користеше EAR, кое се поместува во 2D
+   кога корисникот само ГЛЕДА во телефонот (ротација) → лажен аларм.
+   РЕШЕНИЕ: мериме ВИСТИНСКА флексија/екстензија преку положбата на
+   главата (просек NOSE+уши) во однос на линијата на торзото:
+     • Проектираме го векторот рамо→глава на торзо-оската.
+     • НАКЛОН НАПРЕД/НАЗАД (flexion/extension) го менува аголот глава
+       спрема торзо — тоа го мериме.
+     • Чиста РОТАЦИЈА кон камера НЕ го менува овој агол значајно
+       (главата останува на иста висина над рамото).
+   Безбеден опсег ~15°; аларм само при ЈАСНА и КОНТИНУИРАНА флексија
+   надвор од опсегот (долг дебаунс).                                  */
+function validateNeck(headPts,sho,hip,depthTol){
+  // глава = просек од видливите точки (нос + уши) за стабилност
+  let hx=0,hy=0,hn=0;
+  for(const p of headPts){ if(p&&p.v>=0.4){hx+=p.x;hy+=p.y;hn++;} }
+  if(hn===0||!vis(sho)||!vis(hip))return null;
+  hx/=hn; hy/=hn;
+
+  // должина на торзото како скала (нормализација → независно од далечина)
+  const torsoLen=Math.max(1,dist(sho,hip));
+
+  // вектор торзо (колк→рамо) и вектор врат (рамо→глава)
+  const tdx=sho.x-hip.x, tdy=sho.y-hip.y;
+  const ndx=hx-sho.x,    ndy=hy-sho.y;
+
+  // аголот меѓу двата вектора (neck-to-torso alignment), 0° = совршено
+  // продолжение на 'рбетот. Користиме dot/cross за стабилен агол.
+  const dot=tdx*ndx+tdy*ndy;
+  const cross=tdx*ndy-tdy*ndx;
+  let align=Math.atan2(Math.abs(cross),dot)*180/Math.PI; // 0..180
+
+  // мазни СИЛНО (0.25) — вратот е мала структура, треба стабилност
+  if(smoothVals['neckAlign']==null)smoothVals['neckAlign']=align;
+  smoothVals['neckAlign']+=0.25*(align-smoothVals['neckAlign']);
+  align=smoothVals['neckAlign'];
+
+  // baseline: природниот alignment при исправен став (учи додека не заклучи)
+  if(!spineCalib.locked){
+    spineCalib.neck=spineCalib.neck==null?align
+      :spineCalib.neck+CFG.spine.calibRate*(align-spineCalib.neck);
+  }
+  const base=spineCalib.neck??align;
+  const delta=Math.abs(align-base);          // отстапување од личната неутрала
+
+  // безбеден опсег: природно движење НЕ е грешка
+  let allow=CFG.squat.neckBase;              // ~15°
+  if(depthTol)allow+=CFG.squat.neckDeepExtra*depthTol;
+
+  // severity (за боење) — почнува дури БЛИЗУ прагот, не предвреме
+  let sev=clamp01((delta-allow*0.8)/(allow*0.5))*1
+         +clamp01((delta-allow)/CFG.squat.neckSevPerDeg)*2;
+  sev=Math.min(3,sev);
+
+  return{align,delta,sev,bentRaw:delta>allow};
+}
+function mid(A,B){return{x:(A.x+B.x)/2,y:(A.y+B.y)/2};}
+function clamp01(v){return Math.min(1,Math.max(0,v));}
+function ema(key,val){
+  // засилено мазнење во првите 2с (мирен скелет уште од прв кадар)
+  const warming=performance.now()-camStartTs<CFG.safety.warmupMs;
+  const a=warming?CFG.safety.warmupSmoothing:CFG.smoothing;
+  if(smoothVals[key]==null)smoothVals[key]=val;
+  smoothVals[key]+=a*(val-smoothVals[key]);
+  return smoothVals[key];
+}
+function vis(p){return p&&p.v>=CFG.visMin;}
+
+/* DEBOUNCE — конфигурабилен хистерезис по клуч */
+function debounceN(key,raw,on,off){
+  let d=debounces[key];
+  if(!d)d=debounces[key]={bad:0,good:0,state:false};
+  if(raw){
+    d.bad++;d.good=0;
+    if(d.bad>=on)d.state=true;
+  }else{
+    d.good++;d.bad=0;
+    if(d.good>=off)d.state=false;
+  }
+  return d.state;
+}
+function debounce(key,raw){return debounceN(key,raw,CFG.debounce.on,CFG.debounce.off);}
+
+// =====================================================================
+// COVER-FIT + landmark → екрански пиксели (огледало)
+// =====================================================================
+function computeFit(){
+  const cw=window.innerWidth,ch=window.innerHeight;
+  const vw=video.videoWidth||960,vh=video.videoHeight||720;
+  const scale=Math.max(cw/vw,ch/vh);
+  fit={scale,offX:(cw-vw*scale)/2,offY:(ch-vh*scale)/2,vw,vh};
+}
+function toScreenPts(lm){
+  if(!pts)pts=new Array(33).fill(null).map(()=>({x:0,y:0,v:0}));
+  // warmup: мазни ги и самите пикселни позиции (без „скокови“)
+  const warming=performance.now()-camStartTs<CFG.safety.warmupMs;
+  const a=warming?CFG.safety.warmupSmoothing:1;   // 1 = нормално, без мазнење
+  for(let i=0;i<33;i++){
+    const p=lm[i];
+    const x=window.innerWidth-(fit.offX+p.x*fit.vw*fit.scale);
+    const y=fit.offY+p.y*fit.vh*fit.scale;
+    pts[i].x = a>=1 ? x : pts[i].x+a*(x-pts[i].x);
+    pts[i].y = a>=1 ? y : pts[i].y+a*(y-pts[i].y);
+    pts[i].v=p.visibility==null?1:p.visibility;
+  }
+  return pts;
+}
+function side(idxL,idxR){return pts[idxL].v>=pts[idxR].v?'L':'R';}
+/* стабилен избор на профил-страна со хистереза — спречува скокање L↔R
+   кадар-по-кадар (што би ги мешало EMA состојбите и палело лажни грешки).
+   Се менува страната само ако другата е ЈАСНО подобра (праг 0.12).      */
+function sideStable(idxL,idxR){
+  const vL=pts[idxL].v,vR=pts[idxR].v;
+  if(_sideLock==null){_sideLock=vL>=vR?'L':'R';return _sideLock;}
+  const cur=_sideLock==='L'?vL:vR;
+  const other=_sideLock==='L'?vR:vL;
+  if(other-cur>0.12)_sideLock=_sideLock==='L'?'R':'L';  // јасно подобра → смени
+  return _sideLock;
+}
+
+/* =====================================================================
+   AUTO-VIEW DETECTION — профил наспроти предна поза
+   ---------------------------------------------------------------------
+   Во профил рамената се преклопуваат во 2D → ширината рамо↔рамо е
+   мала. Во предна поза таа ширина драстично расте. Нормализирана
+   со должината на торзото (рамо→колк) станува независна од далечина.
+   Хистереза (frontEnter/frontExit) спречува трепкање меѓу режимите. */
+function detectView(){
+  const shoL=pts[LM.SHO_L],shoR=pts[LM.SHO_R];
+  const hipL=pts[LM.HIP_L],hipR=pts[LM.HIP_R];
+  if(!(shoL.v>0.3&&shoR.v>0.3&&hipL.v>0.3&&hipR.v>0.3))return;
+
+  const shoulderW=dist(shoL,shoR);
+  const torso=Math.max(1,(dist(shoL,hipL)+dist(shoR,hipR))/2);
+  const ratio=ema('viewRatio',shoulderW/torso);
+
+  if(viewMode==='side'&&ratio>CFG.view.frontEnter)viewMode='front';
+  else if(viewMode==='front'&&ratio<CFG.view.frontExit)viewMode='side';
+}
+
+/* =====================================================================
+   ФАЗА 1 — SETUP / READINESS GATE
+   ---------------------------------------------------------------------
+   Пред да почне детекција: целото тело мора да е во кадар, со добра
+   доверба и доволен отстап од рабовите. Кога позата е стабилно добра
+   ~1.2с, се префрла во 'ready'. Дотогаш само води инструкции.
+   Враќа true ако е спремно (детекцијата смее да работи).            */
+function checkSetup(t){
+  if(setupState==='ready')return true;
+
+  const need=[LM.SHO_L,LM.SHO_R,LM.HIP_L,LM.HIP_R,
+              LM.KNE_L,LM.KNE_R,LM.ANK_L,LM.ANK_R];
+  // (1) доверба: барем една страна од секој пар е јасна
+  const pairOk=(L,R)=>pts[L].v>=CFG.setup.minVis||pts[R].v>=CFG.setup.minVis;
+  const confOk=pairOk(LM.SHO_L,LM.SHO_R)&&pairOk(LM.HIP_L,LM.HIP_R)
+             &&pairOk(LM.KNE_L,LM.KNE_R)&&pairOk(LM.ANK_L,LM.ANK_R);
+
+  // (2) цело тело во кадар со отстап од сите рабови
+  let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9;
+  for(const i of need){
+    if(pts[i].v<0.3)continue;
+    minX=Math.min(minX,pts[i].x);maxX=Math.max(maxX,pts[i].x);
+    minY=Math.min(minY,pts[i].y);maxY=Math.max(maxY,pts[i].y);
+  }
+  const mX=CFG.setup.marginRatio*window.innerWidth;
+  const mY=CFG.setup.marginRatio*window.innerHeight;
+  const inFrame=minX>mX&&maxX<window.innerWidth-mX
+             && minY>mY&&maxY<window.innerHeight-mY;
+
+  if(!(confOk&&inFrame)){
+    // надвор од кадар → ресетирај сѐ
+    setupGoodSince=0;setupStableSince=0;setupPrevPos=null;
+    setStatus(confOk?'Влези цело во кадар…':'Намести ја камерата…','');
+    return false;
+  }
+
+  /* ============ ПРОВЕРКА ЗА СТАБИЛНОСТ (анти-прерана калибрација) ============
+     Мери колку се движат рамената и колковите меѓу кадрите. Додека
+     корисникот чекори/се мести, движењето е големо → НЕ калибрирај.
+     Дури кога телото ќе се смири (<5px) непрекинато 1.5с, почнува
+     2-секундното одбројување за калибрација.                              */
+  const cx=(pts[LM.SHO_L].x+pts[LM.SHO_R].x+pts[LM.HIP_L].x+pts[LM.HIP_R].x)/4;
+  const cy=(pts[LM.SHO_L].y+pts[LM.SHO_R].y+pts[LM.HIP_L].y+pts[LM.HIP_R].y)/4;
+  let moved=999;
+  if(setupPrevPos)moved=Math.hypot(cx-setupPrevPos.x,cy-setupPrevPos.y);
+  setupPrevPos={x:cx,y:cy};
+
+  const still=moved<=CFG.setup.stableMoveMax;
+  if(!still){
+    // сѐ уште се движи → ресетирај ги двата тајмери, чекај да се смири
+    setupStableSince=0;setupGoodSince=0;
+    setStatus('Застани мирно…','');
+    return false;
+  }
+
+  // телото е мирно во овој кадар → следи колку долго
+  if(!setupStableSince)setupStableSince=t;
+  if(t-setupStableSince<CFG.setup.stableMs){
+    setStatus('Застани мирно…','');
+    return false;                       // уште не е доволно мирно → без калибрација
+  }
+
+  // ===== телото е стабилно ≥1.5с → ТУКА почнува калибрацијата =====
+  if(!setupGoodSince)setupGoodSince=t;
+  const held=t-setupGoodSince;
+  if(held>=CFG.setup.holdMs){
+    setupState='ready';
+    playCalibFlash();                   // зелен fade одозгора надолу
+    good('Спремен!');
+    return true;
+  }
+  setStatus('Држи... калибрирам','good');
+  return false;
+}
+
+/* width helpers за предна поза */
+function feetWidth(){return Math.abs(pts[LM.ANK_L].x-pts[LM.ANK_R].x);}
+function kneesWidth(){return Math.abs(pts[LM.KNE_L].x-pts[LM.KNE_R].x);}
+
+
+/* =====================================================================
+   SAFETY SWITCH — премногу блиску / делови од тело надвор од кадар
+   → паузирај детекција и бројач за чучањ.                            */
+function squatOutOfFrame(){
+  // (а) барем една чиста страна (профил) за секој клучен зглоб
+  const sideOk=(L,R)=>pts[L].v>=CFG.safety.minConfidence
+                    ||pts[R].v>=CFG.safety.minConfidence;
+  const confOk=sideOk(LM.HIP_L,LM.HIP_R)
+             &&sideOk(LM.KNE_L,LM.KNE_R)
+             &&sideOk(LM.ANK_L,LM.ANK_R);
+  if(!confOk)return true;
+
+  // (б) преблиску: вертикалниот опсег рамо→глужд преголем дел од кадар
+  const sho=pts[LM.SHO_L].v>=pts[LM.SHO_R].v?pts[LM.SHO_L]:pts[LM.SHO_R];
+  const ank=pts[LM.ANK_L].v>=pts[LM.ANK_R].v?pts[LM.ANK_L]:pts[LM.ANK_R];
+  if(vis(sho)&&vis(ank)){
+    const bodySpan=Math.abs(ank.y-sho.y)/window.innerHeight;
+    if(bodySpan>1.05)return true;   // глуждот излегол од долниот раб
+  }
+  if(!(vis(pts[LM.ANK_L])||vis(pts[LM.ANK_R])))return true;
+  return false;
+}
+
+/* =====================================================================
+   CONFIDENCE — квалитет на детекцијата за чучањ (0..1)
+   ---------------------------------------------------------------------
+   Просечна видливост на клучните точки на ДОМИНАНТНАТА страна
+   (профил) или на двете страни (фронт). Ниско → лошо светло/облека/
+   агол на камера → системот не суди, туку бара подобра позиција.     */
+function squatConfidence(s,front){
+  let keys;
+  if(front){
+    keys=[LM.SHO_L,LM.SHO_R,LM.HIP_L,LM.HIP_R,LM.KNE_L,LM.KNE_R,LM.ANK_L,LM.ANK_R];
+  }else{
+    const L=s==='L';
+    keys=[L?LM.SHO_L:LM.SHO_R,L?LM.HIP_L:LM.HIP_R,
+          L?LM.KNE_L:LM.KNE_R,L?LM.ANK_L:LM.ANK_R];
+  }
+  let sum=0;
+  for(const k of keys)sum+=Math.min(1,Math.max(0,pts[k].v));
+  return sum/keys.length;
+}
+
+// =====================================================================
+// FormErrors — хиерархија + fade + анти-преклопување
+// =====================================================================
+const FormErrors=(()=>{
+  const errors={};
+  const placedRects=[];
+
+  return{
+    set(key,x,y,angleRad,text,extra){
+      let e=errors[key];
+      if(!e)e=errors[key]={alpha:0,active:false,x,y,angleRad,text,prio:PRIORITY[key]||9};
+      e.active=true;e.x=x;e.y=y;e.angleRad=angleRad;e.text=text;
+      e.x2=extra?.x2; e.y2=extra?.y2; e.angle2=extra?.angle2;
+      e.labelX=extra?.lx; e.labelY=extra?.ly;
+      e.rgb=extra?.rgb;            // боја на шеврон (default црвена)
+      e.cue=extra?.cue;            // true = насока/совет, не „грешка“ (злато)
+    },
+    clear(){for(const k in errors)delete errors[k];},
+
+    draw(ctx,dt,t){
+      placedRects.length=0;
+
+      let winner=null;
+      const activeErrs=[];          // сите активни ЦРВЕНИ грешки (за глас)
+      for(const k in errors){
+        const e=errors[k];
+        if(!e.active)continue;
+        if(!winner||e.prio<errors[winner].prio)winner=k;
+        if(!e.cue)activeErrs.push(k);
+      }
+      // сортирај по приоритет (1 = најкритично прво)
+      activeErrs.sort((a,b)=>(errors[a].prio)-(errors[b].prio));
+
+      let anyVisible=false,topText=null,topCue=false;
+      for(const k in errors){
+        const e=errors[k];
+        const show=e.active&&k===winner;
+        if(show)e.alpha=Math.min(1,e.alpha+dt/70);
+        else    e.alpha=Math.max(0,e.alpha-dt/CFG.fadeMs);
+        e.active=false;
+        if(e.alpha<=0.01)continue;
+        anyVisible=true;
+        drawChevronGroup(ctx,e.x,e.y,e.angleRad,e.alpha,t,e.rgb);
+        if(e.x2!=null)drawChevronGroup(ctx,e.x2,e.y2,e.angle2,e.alpha,t,e.rgb);
+        const lx=e.labelX!=null?e.labelX:e.x;
+        const ly=e.labelY!=null?e.labelY:e.y;
+        drawLabel(ctx,lx,ly,e.angleRad,e.text,e.alpha,placedRects,e.rgb);
+        if(e.alpha>0.5){topText=e.text;topCue=!!e.cue;}
+      }
+      return{anyVisible,topText,topCue,winner,activeErrs};
+    }
+  };
+})();
+
+// =====================================================================
+// РЕНДЕР: троен шеврон (патувачки бран + неонски сјај)
+// =====================================================================
+function drawChevronGroup(ctx,x,y,angleRad,alpha,t,rgb){
+  const C=rgb||[255,40,70];                // помека црвена
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(angleRad);
+  ctx.lineCap='round';
+  ctx.lineJoin='round';
+
+  const wave=t/900*6;
+  for(let i=0;i<3;i++){
+    const pulse=0.5+0.5*Math.sin(wave-i*1.0);
+    const op=(0.22+0.78*pulse)*alpha;
+    const cx=22+i*16;                      // пократок, поелегантен размер
+    const sz=8+i*1.5;                      // постепено поголеми навон
+    // мек надворешен glow слој
+    ctx.shadowBlur=14;ctx.shadowColor=`rgb(${C[0]},${C[1]},${C[2]})`;
+    ctx.strokeStyle=`rgba(${C[0]},${C[1]},${C[2]},${op.toFixed(3)})`;
+    ctx.lineWidth=3.2-i*0.4;               // потенки навон → елегантно стеснување
+    ctx.beginPath();
+    ctx.moveTo(cx-sz,-sz);
+    ctx.lineTo(cx,0);
+    ctx.lineTo(cx-sz,sz);
+    ctx.stroke();
+    // светол внатрешен раб (премиум двослоен ефект)
+    ctx.shadowBlur=0;
+    ctx.strokeStyle=`rgba(255,255,255,${(op*0.5).toFixed(3)})`;
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(cx-sz,-sz);
+    ctx.lineTo(cx,0);
+    ctx.lineTo(cx-sz,sz);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// =====================================================================
+// РЕНДЕР: лабела со плочка + анти-преклопување
+// =====================================================================
+const LABEL_FONT='600 15px Inter, Helvetica, Arial, sans-serif';
+const LABEL_OFFSET=40;
+
+function rectsOverlap(a,b){
+  return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y;
+}
+
+function drawLabel(ctx,x,y,angleRad,text,alpha,placedRects,rgb){
+  const C=rgb||[255,0,51];
+  ctx.save();
+  ctx.font=LABEL_FONT;
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+
+  const tw=ctx.measureText(text).width;
+  const padX=11,padY=7,h=15+padY*2,w=tw+padX*2,r=h/2;
+
+  const dy=Math.sin(angleRad);
+  let ly;
+  if(dy>0.35)      ly=y-LABEL_OFFSET;
+  else if(dy<-0.35)ly=y+LABEL_OFFSET+6;
+  else             ly=y-LABEL_OFFSET;
+
+  let lx=Math.min(window.innerWidth-w/2-10,Math.max(w/2+10,x));
+  ly=Math.min(window.innerHeight-h,Math.max(h,ly));
+
+  let rect={x:lx-w/2,y:ly-h/2,w,h};
+  const away=ly<y?-1:1;
+  let guard=0;
+  while(placedRects.some(p=>rectsOverlap(rect,p))&&guard<6){
+    ly+=away*(h+8);
+    rect={x:lx-w/2,y:ly-h/2,w,h};
+    guard++;
+  }
+  placedRects.push(rect);
+
+  ctx.shadowBlur=0;
+  ctx.fillStyle=`rgba(7,7,7,${(0.55*alpha).toFixed(3)})`;
+  ctx.beginPath();
+  ctx.moveTo(rect.x+r,rect.y);
+  ctx.arcTo(rect.x+w,rect.y,rect.x+w,rect.y+h,r);
+  ctx.arcTo(rect.x+w,rect.y+h,rect.x,rect.y+h,r);
+  ctx.arcTo(rect.x,rect.y+h,rect.x,rect.y,r);
+  ctx.arcTo(rect.x,rect.y,rect.x+w,rect.y,r);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.shadowBlur=8;
+  ctx.shadowColor=`rgb(${C[0]},${C[1]},${C[2]})`;
+  ctx.fillStyle=`rgba(255,255,255,${alpha.toFixed(3)})`;
+  ctx.fillText(text,lx,ly+0.5);
+  ctx.restore();
+}
+
+// =====================================================================
+// СКЕЛЕТ — премиум минималистички (тенки линии + прстени)
+// =====================================================================
+const BONES=[
+  [LM.SHO_L,LM.EAR_L],[LM.SHO_R,LM.EAR_R],   // врат (рамо↔уво) за боење
+  [LM.SHO_L,LM.SHO_R],[LM.SHO_L,LM.ELB_L],[LM.ELB_L,LM.WRI_L],
+  [LM.SHO_R,LM.ELB_R],[LM.ELB_R,LM.WRI_R],
+  [LM.SHO_L,LM.HIP_L],[LM.SHO_R,LM.HIP_R],[LM.HIP_L,LM.HIP_R],
+  [LM.HIP_L,LM.KNE_L],[LM.KNE_L,LM.ANK_L],
+  [LM.HIP_R,LM.KNE_R],[LM.KNE_R,LM.ANK_R]
+];
+const GOLD_BONES=new Set([
+  `${LM.HIP_L}-${LM.KNE_L}`,`${LM.KNE_L}-${LM.ANK_L}`,
+  `${LM.HIP_R}-${LM.KNE_R}`,`${LM.KNE_R}-${LM.ANK_R}`
+]);
+const GOLD_JOINTS=new Set([LM.HIP_L,LM.HIP_R,LM.KNE_L,LM.KNE_R,LM.ANK_L,LM.ANK_R]);
+
+/* =====================================================================
+   ДИНАМИЧКО БОЕЊЕ ПО СЕРИОЗНОСТ (само Squat)
+   ---------------------------------------------------------------------
+   Секој РЕГИОН на телото добива severity 0..3:
+     0 🟢 правилно · 1 🟡 мало отстапување · 2 🟠 среден ризик · 3 🔴 висок
+   Боите се интерполираат, а severity се МАЗНИ преку EMA (без треперење).
+   Региони: spine (рамо↔колк), knees (колк↔колено), hips (колк↔колк),
+   neck (врат). Релевантниот дел се бои; остатокот останува неутрален.   */
+const SEV_COLORS=[
+  [120,200,120],   // 0 зелено
+  [230,200,90],    // 1 жолто
+  [235,150,70],    // 2 портокалово
+  [255,60,70]      // 3 црвено
+];
+function sevColor(level){
+  const L=Math.min(3,Math.max(0,level));
+  const i=Math.floor(L), f=L-i;
+  const a=SEV_COLORS[i], b=SEV_COLORS[Math.min(3,i+1)];
+  return [Math.round(a[0]+(b[0]-a[0])*f),
+          Math.round(a[1]+(b[1]-a[1])*f),
+          Math.round(a[2]+(b[2]-a[2])*f)];
+}
+// мазнети severity по регион (0..3), за стабилни транзиции
+let regionSev={spine:0,knees:0,hips:0,neck:0};
+function setRegionSev(region,target){
+  // EMA: брзо нагоре (опасност), побавно надолу (смирување) — без трепкање
+  const cur=regionSev[region];
+  const a=target>cur?0.35:0.12;
+  regionSev[region]=cur+a*(target-cur);
+}
+// мапа коска → регион
+function boneRegion(a,b){
+  const S=new Set([a,b]);
+  if(S.has(LM.SHO_L)&&S.has(LM.HIP_L))return 'spine';
+  if(S.has(LM.SHO_R)&&S.has(LM.HIP_R))return 'spine';
+  if(S.has(LM.HIP_L)&&S.has(LM.HIP_R))return 'hips';
+  if((S.has(LM.HIP_L)&&S.has(LM.KNE_L))||(S.has(LM.HIP_R)&&S.has(LM.KNE_R)))return 'knees';
+  if((S.has(LM.KNE_L)&&S.has(LM.ANK_L))||(S.has(LM.KNE_R)&&S.has(LM.ANK_R)))return 'knees';
+  if((S.has(LM.SHO_L)&&S.has(LM.EAR_L))||(S.has(LM.SHO_R)&&S.has(LM.EAR_R)))return 'neck';
+  return null;
+}
+function jointRegion(i){
+  if(i===LM.HIP_L||i===LM.HIP_R)return 'hips';
+  if(i===LM.KNE_L||i===LM.KNE_R||i===LM.ANK_L||i===LM.ANK_R)return 'knees';
+  if(i===LM.SHO_L||i===LM.SHO_R)return 'spine';
+  if(i===LM.EAR_L||i===LM.EAR_R)return 'neck';
+  return null;
+}
+
+function drawSkeleton(goldActive,useSeverity){
+  ctx.lineCap='round';
+  ctx.lineJoin='round';
+  for(const[a,b]of BONES){
+    if(!(vis(pts[a])&&vis(pts[b])))continue;
+    let col=null, glow=0, lw=1.1;             // потенки премиум линии
+
+    if(useSeverity){
+      const reg=boneRegion(a,b);
+      const sev=reg?regionSev[reg]:0;
+      if(goldActive&&GOLD_BONES.has(`${a}-${b}`)&&sev<0.5){
+        col=[255,215,0];glow=14;lw=1.8;        // златна потврда (длабочина OK)
+      }else if(sev>0.15&&reg){
+        col=sevColor(sev);glow=sev>1.5?12:6;lw=1.7;  // боја по сериозност
+      }
+    }else if(goldActive&&GOLD_BONES.has(`${a}-${b}`)){
+      col=[255,215,0];glow=14;lw=1.8;
+    }
+
+    if(col){
+      ctx.shadowBlur=glow;ctx.shadowColor=`rgb(${col[0]},${col[1]},${col[2]})`;
+      ctx.strokeStyle=`rgb(${col[0]},${col[1]},${col[2]})`;ctx.lineWidth=lw;
+    }else{
+      ctx.shadowBlur=0;ctx.strokeStyle='rgba(255,255,255,0.32)';ctx.lineWidth=1.1;
+    }
+    ctx.beginPath();
+    ctx.moveTo(pts[a].x,pts[a].y);
+    ctx.lineTo(pts[b].x,pts[b].y);
+    ctx.stroke();
+  }
+
+  for(const i of Object.values(LM)){
+    if(!vis(pts[i]))continue;
+    let col=null, glow=0, filled=false;
+
+    if(useSeverity){
+      const reg=jointRegion(i);
+      const sev=reg?regionSev[reg]:0;
+      if(goldActive&&GOLD_JOINTS.has(i)&&sev<0.5){
+        col=[255,215,0];glow=14;filled=true;
+      }else if(sev>0.15&&reg){
+        col=sevColor(sev);glow=sev>1.5?12:6;filled=true;
+      }
+    }else if(goldActive&&GOLD_JOINTS.has(i)){
+      col=[255,215,0];glow=14;filled=true;
+    }
+
+    const rad=col?3.2:2.4;                     // помали, поелегантни прстени
+    if(col){
+      ctx.shadowBlur=glow;ctx.shadowColor=`rgb(${col[0]},${col[1]},${col[2]})`;
+      // полн центар + надворешен прстен = премиум „зглоб“
+      ctx.fillStyle=`rgb(${col[0]},${col[1]},${col[2]})`;
+      ctx.beginPath();ctx.arc(pts[i].x,pts[i].y,rad,0,Math.PI*2);ctx.fill();
+      ctx.shadowBlur=0;ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},0.5)`;
+      ctx.lineWidth=1;
+      ctx.beginPath();ctx.arc(pts[i].x,pts[i].y,rad+2.5,0,Math.PI*2);ctx.stroke();
+    }else{
+      ctx.shadowBlur=0;ctx.strokeStyle='rgba(255,255,255,0.55)';ctx.lineWidth=1.1;
+      ctx.beginPath();ctx.arc(pts[i].x,pts[i].y,rad,0,Math.PI*2);ctx.stroke();
+    }
+  }
+  ctx.shadowBlur=0;
+}
+
+// =====================================================================
+// АНАЛИЗАТОРИ ПО ВЕЖБА
+// =====================================================================
+function forwardSign(s){
+  const toe=pts[s==='L'?LM.FOOT_L:LM.FOOT_R];
+  const ank=pts[s==='L'?LM.ANK_L:LM.ANK_R];
+  // мазни ја разликата toe−ankle → насоката не „скока“ од треперење
+  const raw=(toe.x-ank.x);
+  const key='fwdSign'+s;
+  if(smoothVals[key]==null)smoothVals[key]=raw;
+  smoothVals[key]+=0.25*(raw-smoothVals[key]);
+  // хистереза околу нула за стабилен знак
+  return smoothVals[key]>=0?1:-1;
+}
+const DIR={
+  down:Math.PI/2,
+  up:-Math.PI/2,
+  left:Math.PI,            // покажува лево (екрански)
+  right:0,                 // покажува десно (екрански)
+  back:(fwd)=>fwd>0?Math.PI:0,
+  upBack:(fwd)=>Math.atan2(-1,-fwd)
+};
+
+/* ----------------------- А) ЧУЧАЊ -----------------------
+   v9: грбот се мери БЕЗ точка од главата — преку изведеното
+   отстапување на MID_BACK (сагита од скратување на тетивата
+   SHOULDER–HIP). Вртењето на главата кон екранот нема влијание,
+   а делумното вртење на ТЕЛОТО кон камерата се компензира преку
+   ширината меѓу рамената (динамичка толеранција).
+   • Чист наклон е грешка САМО над 120° (плитка фаза); под 120°
+     длабокиот хип-хинџ со прав грб е легитимна биомеханика.
+   • Златна зона со одлична форма → суспензија на грешки 5 кадри. */
+function analyzeSquat(){
+  const s=sideStable(LM.KNE_L,LM.KNE_R);
+  const hip=pts[s==='L'?LM.HIP_L:LM.HIP_R];
+  const knee=pts[s==='L'?LM.KNE_L:LM.KNE_R];
+  const ankle=pts[s==='L'?LM.ANK_L:LM.ANK_R];
+  const toe=pts[s==='L'?LM.FOOT_L:LM.FOOT_R];
+  const sho=pts[s==='L'?LM.SHO_L:LM.SHO_R];
+  squatGoldActive=false;
+  if(!(vis(hip)&&vis(knee)&&vis(ankle))){neutral('Намести го телото во кадар');return;}
+
+  // SAFETY SWITCH — пред било каква логика (преблиску/делумно надвор)
+  if(squatOutOfFrame()){
+    neutral('Влези во кадар…');
+    st.squat.phase='up';st.squat.minKnee=180;st.squat.counted=false;
+    FormErrors.clear();
+    squatGoldActive=false;
+    return;
+  }
+
+  const fwd=forwardSign(s);
+  const kneeAngle=ema('sqKnee',calculateAngle(hip,knee,ankle));
+  const S=st.squat;
+
+  /* === CONFIDENCE GATE ===
+     Ако квалитетот на детекцијата е низок (лошо светло, широка облека,
+     лош агол), НЕ давај корекции — побарај подобра позиција. Се мазни
+     за да не трепка пораката. squatConf е 0..1.                       */
+  const confRaw=squatConfidence(s,false);
+  const squatConf=ema('sqConf',confRaw);
+  squatConfLast=squatConf;
+  if(squatConf<CFG.squat.minConfidence){
+    neutral('Намести подобро — нејасна слика');
+    // не ресетирај фаза агресивно, но не суди ниту брои во овој кадар
+    FormErrors.clear();
+    squatGoldActive=false;
+    setRegionSev('spine',0);setRegionSev('knees',0);
+    setRegionSev('hips',0);setRegionSev('neck',0);
+    return;
+  }
+
+  // --- фази ---
+  const rising=hipVelY<CFG.hipVelThresh;
+  if(S.phase==='up'&&kneeAngle<CFG.squat.upAngle-12){
+    S.phase='down';S.minKnee=kneeAngle;S.counted=false;
+  }
+  if(S.phase==='down')S.minKnee=Math.min(S.minKnee,kneeAngle);
+  const depthOK=S.minKnee<=CFG.squat.depthAngle;
+
+  const checksActive=S.phase==='down'&&kneeAngle<CFG.squat.deadzone;
+  const depthT=clamp01((CFG.squat.deepAngle-kneeAngle)/(CFG.squat.deepAngle-90));
+
+  /* ====== (prio 1): КРИТИЧНА ПРОВЕРКА НА 'РБЕТОТ — v16 ======
+     • Наклон на торзото SHOULDER→HIP над baseline, со динамичка
+       длабочинска дозвола. Активна во СИТЕ фази, ја крши суспензијата
+       и ја гаси „Одлична форма“. Инстантен дебаунс (1 кадар). */
+  const isStanding=S.phase==='up'&&kneeAngle>155;
+  const thighLen=dist(hip,knee);
+  const shoulderW=(pts[LM.SHO_L].v>0.3&&pts[LM.SHO_R].v>0.3)
+    ?dist(pts[LM.SHO_L],pts[LM.SHO_R]):null;
+  const spine=validateSpine('sqSpine',sho,hip,thighLen,shoulderW,isStanding,depthT);
+
+  let backError=false;
+  {
+    // единствена метрика: наклон на торзото со динамичка дозвола
+    const spineBentRaw=spine?spine.bentRaw:false;
+    // асиметричен дебаунс: 2 кадри за палење (брзо, но не на 1 шум-кадар),
+    // долго држење за гасење → стрелката не трепка
+    backError=debounceN('sqSpineBent',spineBentRaw,2,CFG.holdOff);
+    if(backError){
+      errorSuppress=0;                              // апсолутен приоритет
+      const backMid=mid(sho,hip);                   // КОТВА: средина на кичмата
+      FormErrors.set('sqLean',backMid.x,backMid.y,DIR.upBack(fwd),
+                     'ИСПРАВИ ГО ГРБОТ И ГРАДИТЕ ГОРЕ!');
+    }
+  }
+
+  // === БОЕЊЕ ПО СЕРИОЗНОСТ: постави severity по регион ===
+  setRegionSev('spine', spine?spine.sev:0);
+
+  /* === ГРЕШКА: СТАПАЛА / ПЕТИЦИ (prio 1, безбедносно) ===
+     Ако петицата се крене над глуждот (тежината префрлена напред
+     на прстите), стрелка ИНСТАНТНО изелува на стапалото.            */
+  let heelError=false;
+  {
+    const heel=pts[s==='L'?LM.HEEL_L:LM.HEEL_R];
+    // бара ДОБРА видливост на петицата (мала структура, шум-осетлива)
+    if(checksActive&&heel&&heel.v>=0.6&&vis(ankle)&&vis(knee)){
+      const shinLen=Math.abs(hip.y-knee.y)||1;
+      const heelLift=(ankle.y-heel.y)/shinLen;      // + = петицата над глужд
+      // 2 кадри за палење, долго држење → без трепкање
+      heelError=debounceN('sqHeel',heelLift>CFG.squat.heelLiftRatio,2,CFG.holdOff);
+      if(heelError){
+        FormErrors.set('sqHeel',heel.x,heel.y,DIR.down,'Притисни на цела стапка!');
+      }
+    }
+  }
+  const criticalErr=backError||heelError;
+
+  /* === ДЛАБОЧИНСКИ CUE (не е грешка): води надолу до 90° ===
+     Додека се СПУШТА и сè уште не ја допрел длабочината, златна
+     стрелка надолу на колкот го кани да оди подлабоко. Исчезнува
+     штом ќе допре 90° (тогаш брои + злато). Под 90° нема ништо.   */
+  const descending=hipVelY>0.6;            // колкот оди надолу
+  const needDeeper=S.phase==='down'&&!depthOK&&descending&&kneeAngle<CFG.squat.deadzone;
+  if(debounceN('sqDeeper',needDeeper,CFG.instantDebounce.on,CFG.instantDebounce.off)
+     &&!criticalErr){
+    FormErrors.set('sqDeeper',hip.x,hip.y,DIR.down,'Уште подолу — до 90°',
+                   {rgb:[255,215,0],cue:true});  // ЗЛАТНА насока, не црвена грешка
+  }
+
+  /* ============ ЗЛАТНА ЗОНА + СУСПЕНЗИЈА ============
+     Невозможна при критична грешка ('рбет или стапала).   */
+  const goldRaw=S.phase==='down'&&kneeAngle<=CFG.squat.depthAngle&&!criticalErr;
+  squatGoldActive=debounceN('sqGold',goldRaw,CFG.goldDebounce.on,CFG.goldDebounce.off)&&!criticalErr;
+  if(squatGoldActive){
+    errorSuppress=CFG.squat.goldSuppressFrames;
+  }
+  const suppressed=errorSuppress>0&&!criticalErr;
+
+  // --- повторување (без „Одлична форма“ ако има критична грешка) ---
+  if(S.phase==='down'&&depthOK&&rising&&!S.counted){
+    reps++;repEl.textContent=reps;S.counted=true;
+    if(!criticalErr)good('Одлична форма');
+    finalizeRep();                          // затвори ги метриките за овој реп
+    if(setReps.length>=SET_SIZE){           // 10 завршени → AI извештај
+      showSetReport(setReps.slice());
+      setReps=[];
+    }
+  }
+  if(S.phase==='down'&&kneeAngle>=CFG.squat.upAngle){
+    S.phase='up';S.minKnee=180;
+  }
+
+  // === ГРЕШКА: кревање без длабочина (prio 2) ===
+  const shallow=S.phase==='down'&&rising&&!depthOK&&S.minKnee<CFG.squat.deadzone;
+  if(debounce('sqShallow',shallow)&&!criticalErr&&!suppressed){
+    FormErrors.set('sqShallow',hip.x,hip.y,DIR.down,'Спушти се подлабоко (до 90°)!');
+  }
+
+  // === ГРЕШКА: колена пред прстите (prio 3) — НАМАЛЕНА ЧУВСТВИТЕЛНОСТ ===
+  let kneeSev=0;
+  if(vis(toe)&&vis(knee)&&squatConf>=CFG.squat.kneeMinConf){
+    const thighV=Math.abs(hip.y-knee.y);
+    const bufferRatio=CFG.squat.kneeBufferRatio+CFG.squat.deepBufferExtra*depthT;
+    const kneeBuffer=thighV*bufferRatio;
+    // мазни го САМОТО отстапување (не самата точка) → стабилен, но брз сигнал
+    const overRaw=(knee.x-toe.x)*fwd;
+    const over=ema('sqKneeOver',overRaw);
+    const kneeActive=S.phase==='down'&&kneeAngle<150;   // само подлабоко
+
+    // severity за боење (почни жолто малку пред прагот)
+    if(kneeActive&&thighV>1){
+      kneeSev=clamp01((over-kneeBuffer*0.7)/(kneeBuffer*0.5))*1
+             +clamp01((over-kneeBuffer)/(thighV*0.18))*2;
+      kneeSev=Math.min(3,kneeSev);
+    }
+
+    const kneesFwd=kneeActive&&over>kneeBuffer;
+
+    /* АПСОЛУТЕН ТАВАН: само ЕКСТРЕМНО напред (над hardCap%). */
+    const hardOver=kneeActive&&over>thighV*CFG.squat.kneeHardCap;
+
+    /* ПОТВРДА СО ВРЕМЕ: грешката пали само ако отстапувањето е ЈАСНО
+       и КОНЗИСТЕНТНО — построг дебаунс (повеќе кадри) → нула лажни
+       аларми при природно поместување на коленото во чист чучањ.      */
+    if(debounceN('sqKneeFwd',kneesFwd,CFG.kneeDebounce.on,CFG.kneeDebounce.off)
+       &&!criticalErr&&(!suppressed||hardOver)){
+      FormErrors.set('sqKneeFwd',knee.x,knee.y,DIR.back(fwd),'Турни ги колковите назад!');
+    }
+  }
+  setRegionSev('knees', Math.max(kneeSev, depthT>0.1&&!depthOK&&shallow?1:0));
+  // колковите: благо жолто само ако има shallow/knee проблем, инаку зелено
+  setRegionSev('hips', shallow?1.2:0);
+
+  // === СОБИРАЊЕ СТАТИСТИКА за извештај (само додека е во движење) ===
+  if(S.phase==='down'){
+    const activeErrKeys=[];
+    if(backError)activeErrKeys.push('sqLean');
+    if(heelError)activeErrKeys.push('sqHeel');
+    if(debounces['sqKneeFwd']?.state)activeErrKeys.push('sqKneeFwd');
+    if(debounces['sqShallow']?.state)activeErrKeys.push('sqShallow');
+    const leanDelta=spine?spine.deltaLean:null;
+    const koRatio=(vis(toe)&&vis(knee))?
+      ((knee.x-toe.x)*fwd)/Math.max(1,Math.abs(hip.y-knee.y)):null;
+    repAccumFrame(kneeAngle,leanDelta,squatConf,koRatio,activeErrKeys);
+  }
+}
+
+/* ----------------- А-FRONT) ЧУЧАЊ ОД ПРЕДНА ПОЗА -----------------
+   Knee Valgus (колена навнатре) + Hip Shift (асиметрија).
+   Бројач: вертикално движење на колкот (спуштање под baseline →
+   враќање). Baseline за ширина на стапала се учи при исправен став. */
+function analyzeSquatFront(){
+  const shoL=pts[LM.SHO_L],shoR=pts[LM.SHO_R];
+  const hipL=pts[LM.HIP_L],hipR=pts[LM.HIP_R];
+  const kneL=pts[LM.KNE_L],kneR=pts[LM.KNE_R];
+  const ankL=pts[LM.ANK_L],ankR=pts[LM.ANK_R];
+  squatGoldActive=false;
+
+  const okPair=(a,b)=>a.v>=0.4&&b.v>=0.4;
+  if(!(okPair(hipL,hipR)&&okPair(kneL,kneR)&&okPair(ankL,ankR))){
+    neutral('Влези цело во кадар…');return;
+  }
+
+  // confidence gate за фронтален приказ (двете страни мора да се јасни)
+  const confRaw=squatConfidence('L',true);
+  const fConf=ema('fConf',confRaw);
+  squatConfLast=fConf;
+  if(fConf<CFG.squat.minConfidence){
+    neutral('Намести подобро — нејасна слика');
+    FormErrors.clear();squatGoldActive=false;return;
+  }
+
+  const hipY=ema('fHipY',(hipL.y+hipR.y)/2);
+  const kneeY=ema('fKneeY',(kneL.y+kneR.y)/2);
+  const ankY=(ankL.y+ankR.y)/2;
+  // скала врзана за ТЕЛОТО (колено→глужд), не за екранот → работи на
+  // секоја далечина од камерата
+  const legLen=Math.max(20,Math.abs(ankY-kneeY));
+  const isUp=(kneeY-hipY)>legLen*0.9;   // колк високо над колена = исправен
+
+  // --- baseline: ширина стапала + почетна висина колк при исправен став ---
+  const fW=ema('fFeetW',feetWidth());
+  if(isUp){
+    frontCalib.feetW=frontCalib.feetW==null?fW:frontCalib.feetW+0.05*(fW-frontCalib.feetW);
+    frontCalib.hipBaseY=frontCalib.hipBaseY==null?hipY:frontCalib.hipBaseY+0.05*(hipY-frontCalib.hipBaseY);
+  }
+  const feetRef=frontCalib.feetW??fW;
+  const hipBase=frontCalib.hipBaseY??hipY;
+
+  // фаза на чучањ: колкот спуштен за дел од должината на НОГАТА (не екран)
+  const dropPx=hipY-hipBase;
+  const dropThresh=legLen*0.35;          // ~35% од потколеницата = почна чучањ
+  const S=st.squat;
+  if(S.frontPhase==='up'&&dropPx>dropThresh)S.frontPhase='down';
+  const inSquat=S.frontPhase==='down';
+
+  /* === KNEE VALGUS (prio 1) — ДВЕ СТРЕЛКИ НАНАДВОР ===
+     Секое колено добива стрелка кон својата страна (нанадвор),
+     покажувајќи му на клиентот на каде точно да го отвори.       */
+  const bending=dropPx>dropThresh*0.4;   // и пред полна длабочина
+  const kW=ema('fKneeW',kneesWidth());
+  const valgus=bending&&kW<feetRef*CFG.squat.valgusRatio;
+  if(debounceN('sqValgus',valgus,CFG.instantDebounce.on,CFG.instantDebounce.off)){
+    // кое колено е на која страна од екранот (екрански X)
+    const leftKnee  = kneL.x<=kneR.x ? kneL : kneR;   // полево на екран
+    const rightKnee = kneL.x<=kneR.x ? kneR : kneL;   // подесно на екран
+    const cx=(kneL.x+kneR.x)/2;
+    FormErrors.set('sqValgus',
+      leftKnee.x,leftKnee.y,DIR.left,'ОТВОРИ ГИ КОЛЕНАТА НАНАДВОР!',
+      {x2:rightKnee.x,y2:rightKnee.y,angle2:DIR.right,
+       lx:cx,ly:Math.min(leftKnee.y,rightKnee.y)});  // лабела централно, над колена
+  }
+  const valgusActive=!!debounces['sqValgus']?.state;
+
+  /* === HIP SHIFT / ЛАТЕРАЛЕН НАКЛОН (prio 2) ===
+     Два сигнали: (а) разлика во ВИСИНА на колковите, (б) ЛАТЕРАЛЕН
+     наклон на трупот — центарот на рамената поместен настрана од
+     центарот на колковите (целото тело се крива на една страна).
+     Кој било од двата над прагот → грешка.                          */
+  const hipDiffRaw=Math.abs(hipL.y-hipR.y);
+  const hipDiff=ema('fHipDiff', hipDiffRaw);
+  const hipHeightShift=hipDiff>CFG.squat.hipShiftRatio*feetRef;
+
+  // латерален наклон: хоризонтално отстапување центар-рамена vs центар-колкови
+  const shoMidX=(shoL.x+shoR.x)/2, hipMidX=(hipL.x+hipR.x)/2;
+  const lateralRaw=Math.abs(shoMidX-hipMidX);
+  const lateral=ema('fLateral',lateralRaw);
+  const lateralShift=lateral>CFG.squat.lateralShiftRatio*feetRef;
+
+  const shift=bending&&(hipHeightShift||lateralShift);
+  if(debounceN('sqHipShift',shift,CFG.instantDebounce.on,CFG.instantDebounce.off)
+     &&!valgusActive){
+    // котва: пониската страна (ако висина) или страната кон која се крива
+    let anchor;
+    if(lateralShift&&!hipHeightShift){
+      anchor=shoMidX>hipMidX?hipR:hipL;       // се крива настрана
+    }else{
+      anchor=hipL.y>hipR.y?hipL:hipR;
+    }
+    FormErrors.set('sqHipShift',anchor.x,anchor.y,DIR.up,'СПУШТАЈ СЕ ЕДНАКВО НА ДВЕТЕ НОЗЕ!');
+  }
+
+  // златна потврда кога е длабоко и нема грешки
+  squatGoldActive=inSquat&&!valgusActive&&!debounces['sqHipShift']?.state;
+
+  // --- повторување: враќање нагоре по спуштање ---
+  if(S.frontPhase==='down'&&dropPx<dropThresh*0.4){
+    S.frontPhase='up';reps++;repEl.textContent=reps;
+    if(!valgusActive)good('Одлична форма');
+  }
+  if(!inSquat&&!valgusActive&&!shift)neutral('Спремен за чучањ');
+}
+
+/* -------------------- Б) МРТВО КРЕВАЊЕ --------------------
+   Истиот MID_BACK механизам со заеднички калибриран baseline:
+   скратување на тетивата SHOULDER–HIP → сагита → кифоза.       */
+function analyzeDeadlift(){
+  const s=side(LM.HIP_L,LM.HIP_R);
+  const sho=pts[s==='L'?LM.SHO_L:LM.SHO_R];
+  const hip=pts[s==='L'?LM.HIP_L:LM.HIP_R];
+  const knee=pts[s==='L'?LM.KNE_L:LM.KNE_R];
+  const wri=pts[s==='L'?LM.WRI_L:LM.WRI_R];
+  if(!(vis(sho)&&vis(hip)&&vis(knee))){neutral('Сврти се странично кон камерата');return;}
+
+  const fwd=forwardSign(s);
+  const hipAngle=ema('dlHip',calculateAngle(sho,hip,knee));
+  const kneeAngle=ema('dlKnee',calculateAngle(hip,knee,pts[s==='L'?LM.ANK_L:LM.ANK_R]));
+  const S=st.deadlift;
+  const descending=hipVelY>1.2;
+  const inLift=hipAngle<CFG.deadlift.hipUp-10;
+
+  // prio 1 (КРИТИЧНО): заоблување на грбот при кревање
+  // забелешка: мртвото кревање е hip-hinge → торзото е природно МНОГУ
+  // навалено; затоа праќаме голема длабочинска дозвола (depthTol=1) за
+  // да реагира само на РЕАЛНО заоблување, не на нормалниот hinge.
+  const isStanding=!inLift&&hipAngle>165;
+  const thighLen=dist(hip,knee);
+  const shoulderW=(pts[LM.SHO_L].v>0.3&&pts[LM.SHO_R].v>0.3)
+    ?dist(pts[LM.SHO_L],pts[LM.SHO_R]):null;
+  const spine=validateSpine('dlSpine',sho,hip,thighLen,shoulderW,isStanding,1);
+  let backBad=false;
+  if(spine){
+    backBad=debounceN('dlBackBad',spine.bentRaw,
+                      CFG.safetyDebounce.on,CFG.safetyDebounce.off);
+  }
+  if(backBad){
+    FormErrors.set('dlBack',sho.x,sho.y,DIR.up,'ИСПРАВИ ГО ГРБОТ!');
+  }
+
+  // prio 2: прерано виткање колена
+  if(vis(wri)){
+    const barAboveKnee=wri.y<knee.y-8;
+    const earlyBend=descending&&barAboveKnee&&kneeAngle<CFG.deadlift.earlyKneeBend;
+    if(debounce('dlEarlyKnee',earlyBend)&&!backBad){
+      FormErrors.set('dlEarlyKnee',knee.x,knee.y,DIR.back(fwd),'Прво помини ги колената со шипката!');
+    }
+  }
+
+  if(S.phase==='up'&&hipAngle<CFG.deadlift.hipDown){
+    S.phase='down';
+    if(!backBad)good('Долна фаза — грб исправен');
+  }
+  if(S.phase==='down'&&hipAngle>=CFG.deadlift.hipUp){
+    S.phase='up';reps++;repEl.textContent=reps;
+    if(!backBad)good('Одлична форма');
+  }
+  if(!inLift&&!backBad)neutral('Спремен за кревање');
+}
+
+/* ---------------------- В) БИЦЕПС ---------------------- */
+function analyzeCurl(){
+  const s=side(LM.ELB_L,LM.ELB_R);
+  const sho=pts[s==='L'?LM.SHO_L:LM.SHO_R];
+  const elb=pts[s==='L'?LM.ELB_L:LM.ELB_R];
+  const wri=pts[s==='L'?LM.WRI_L:LM.WRI_R];
+  if(!(vis(sho)&&vis(elb)&&vis(wri))){neutral('Раката не е видлива');return;}
+
+  const fwd=forwardSign(side(LM.ANK_L,LM.ANK_R));
+  const elbowAngle=ema('clElbow',calculateAngle(sho,elb,wri));
+  const upperArm=dist(sho,elb);
+  const S=st.curl;
+
+  const drift=(elb.x-sho.x)*fwd;
+  const cheating=elbowAngle<110&&drift>CFG.curl.elbowDrift*upperArm;
+  const cheatActive=debounce('clElbowFwd',cheating);
+  if(cheatActive){
+    FormErrors.set('clElbowFwd',elb.x,elb.y,DIR.back(fwd),'Стабилизирај ги лактите!');
+  }
+
+  if(!S.flexed){
+    if(elbowAngle<CFG.curl.flexedBelow){
+      S.flexed=true;S.maxExt=elbowAngle;S.warned=false;
+      good('Контракција ✓');
+    }
+  }else{
+    S.maxExt=Math.max(S.maxExt,elbowAngle);
+
+    if(elbowAngle>=CFG.curl.extendedAbove){
+      S.flexed=false;reps++;repEl.textContent=reps;
+      good('Одлична форма');
+      return;
+    }
+    const reversing=elbowAngle<S.maxExt-CFG.curl.flexDelta;
+    if(reversing&&S.maxExt<CFG.curl.lazyExtension&&!S.warned&&debounce('clLazy',true)){
+      S.warned=true;S.flexed=false;
+    }
+    if(S.warned&&!cheatActive){
+      FormErrors.set('clLazy',wri.x,wri.y,DIR.down,'Испушти до крај!');
+    }
+    if(!reversing)debounce('clLazy',false);
+  }
+}
+
+// =====================================================================
+// ГЛАВЕН ЦИКЛУС
+// =====================================================================
+function setStatus(t,c){statusEl.textContent=t;statusEl.className=c;}
+function good(t){if(!statusEl.classList.contains('bad'))setStatus(t,'good');}
+function neutral(t){if(!statusEl.classList.contains('bad'))setStatus(t,'');}
+
+/* =====================================================================
+   AI ИЗВЕШТАЈ ПО СЕТ (10 повторувања)
+   ---------------------------------------------------------------------
+   Се базира на ПРОСЕКОТ од сите репови (не еден кадар), со confidence
+   и временско филтрирање. Пресметува Technique/Confidence score,
+   најчести/најсериозни грешки, длабочина, стабилност, темпо, и совети. */
+const ERR_LABEL={
+  sqLean:'Заоблен/наведнат грб', sqHeel:'Кревање на петици',
+  sqKneeFwd:'Колена пренапред', sqShallow:'Плиток чучањ',
+  sqValgus:'Колена навнатре (валгус)', sqHipShift:'Асиметрични колкови'
+};
+const ERR_SEVERITY={sqLean:3,sqValgus:3,sqHeel:3,sqShallow:2,sqHipShift:2,sqKneeFwd:1};
+
+function computeSetReport(repsArr){
+  const n=repsArr.length;
+  // просечна длабочина (минимален агол на коленото; помал = подлабоко)
+  const avgMinKnee=repsArr.reduce((s,r)=>s+r.minKneeAngle,0)/n;
+  const depthPct=Math.round(clamp01((110-avgMinKnee)/(110-70))*100); // 90°≈ цел
+  // просечен confidence
+  const avgConf=Math.round(repsArr.reduce((s,r)=>s+r.conf,0)/n*100);
+  // стабилност на грбот: помал просечен lean delta = постабилно
+  const avgLean=repsArr.reduce((s,r)=>s+Math.abs(r.avgLean),0)/n;
+  const stability=Math.round(clamp01(1-(avgLean/40))*100);
+  // позиција на колена: просечен over-ratio (помал = подобро)
+  const avgKneeOver=repsArr.reduce((s,r)=>s+r.avgKneeOver,0)/n;
+  // темпо: просечно траење на репот
+  const avgDurS=(repsArr.reduce((s,r)=>s+r.durationMs,0)/n)/1000;
+  // конзистентност на длабочина (стандардна девијација)
+  const depthVar=Math.sqrt(repsArr.reduce((s,r)=>s+Math.pow(r.minKneeAngle-avgMinKnee,2),0)/n);
+  const depthConsist=Math.round(clamp01(1-(depthVar/25))*100);
+
+  // конзистентност на темпо (стд. девијација на траење)
+  const tempoVar=Math.sqrt(repsArr.reduce((s,r)=>s+Math.pow(r.durationMs/1000-avgDurS,2),0)/n);
+  const tempoConsist=Math.round(clamp01(1-(tempoVar/1.2))*100);
+
+  // ТРЕНД НА ЗАМОР: спореди прва половина vs втора половина (длабочина)
+  const half=Math.floor(n/2);
+  let fatigue='стабилен';
+  if(n>=4){
+    const firstD=repsArr.slice(0,half).reduce((s,r)=>s+r.minKneeAngle,0)/half;
+    const lastD=repsArr.slice(n-half).reduce((s,r)=>s+r.minKneeAngle,0)/half;
+    if(lastD-firstD>8)fatigue='опаѓа (плитко кон крај)';
+    else if(firstD-lastD>8)fatigue='се подобрува';
+  }
+
+  // ВКУПНА ОЦЕНКА (буква)
+  function grade(score){
+    if(score>=90)return 'A'; if(score>=80)return 'B';
+    if(score>=70)return 'C'; if(score>=55)return 'D'; return 'F';
+  }
+
+  // агрегирани грешки низ сетот (само конзистентни, веќе филтрирани)
+  const errCount={}, errSumFrac={};
+  for(const r of repsArr){
+    for(const k in r.errPersist){
+      errCount[k]=(errCount[k]||0)+1;
+      errSumFrac[k]=(errSumFrac[k]||0)+r.errPersist[k];
+    }
+  }
+  const errList=Object.keys(errCount).map(k=>({
+    key:k, reps:errCount[k], avgFrac:errSumFrac[k]/errCount[k],
+    sev:ERR_SEVERITY[k]||1, label:ERR_LABEL[k]||k
+  }));
+  // најчести (по број репови) и најсериозни (severity × зачестеност)
+  const mostFrequent=[...errList].sort((a,b)=>b.reps-a.reps);
+  const mostSevere=[...errList].sort((a,b)=>(b.sev*b.reps)-(a.sev*a.reps));
+
+  // Technique Score: почни 100, одземи по сериозност × зачестеност
+  let tech=100;
+  for(const e of errList)tech-=e.sev*5*(e.reps/n);
+  // плиток/нестабилен исто намалуваат
+  tech-=Math.max(0,(70-depthPct))*0.15;
+  tech-=Math.max(0,(80-stability))*0.12;
+  tech=Math.max(20,Math.min(100,Math.round(tech)));
+
+  return{n,depthPct,avgMinKnee:Math.round(avgMinKnee),avgConf,stability,
+         avgKneeOver,avgDurS,depthConsist,tempoConsist,fatigue,
+         grade:grade(tech),mostFrequent,mostSevere,tech,errList};
+}
+
+function showSetReport(repsArr){
+  const valid=repsArr.filter(r=>r.conf>=CFG.squat.minConfidence);
+  if(valid.length<3){return;}
+  const R=computeSetReport(valid);
+
+  const tempo=R.avgDurS<1.2?'брзо':R.avgDurS>2.8?'бавно':'добро';
+  const kneePos=R.avgKneeOver<0.15?'добра':R.avgKneeOver<0.30?'прифатлива':'премногу напред';
+  const ringColor=R.tech>=80?'#7ed18f':R.tech>=60?'#e8c87a':'#e88';
+  const gradeWord=R.tech>=90?'ОДЛИЧНО':R.tech>=80?'ДОБРО':R.tech>=65?'СОЛИДНО':R.tech>=50?'ПРОСЕЧНО':'СЛАБО';
+
+  // дали даден регион има конзистентна грешка
+  const hasErr=k=>R.errList.find(e=>e.key===k);
+  const ck='<span class="srCheck" style="background:rgba(126,209,143,.18);color:#7ed18f">✓</span>';
+  const wn=(c)=>`<span class="srStat" style="color:${c}">`;
+
+  // --- анатомски силуети (SVG) со обоени делови ---
+  function silLegs(state){ // state: 'red'|'gold'|'green' за колена
+    const c=state==='red'?'#ff4055':state==='gold'?'#e8c87a':'#7ed18f';
+    const arrows=state==='red'
+      ? `<path d="M30 60 L20 60 M24 56 L20 60 L24 64" stroke="#ff4055" stroke-width="2.5" fill="none"/>
+         <path d="M70 60 L80 60 M76 56 L80 60 L76 64" stroke="#ff4055" stroke-width="2.5" fill="none"/>` : '';
+    return `<svg viewBox="0 0 100 130">
+      <path d="M35 8 Q50 4 65 8 L66 30 Q50 36 34 30 Z" fill="#2a2a2a"/>
+      <path d="M37 30 Q40 60 38 95 L33 122 L43 122 L47 62 L50 40 L53 62 L57 122 L67 122 L62 95 Q60 60 63 30 Z" fill="#222"/>
+      <ellipse cx="42" cy="60" rx="9" ry="11" fill="${c}" opacity="0.9"/>
+      <ellipse cx="58" cy="60" rx="9" ry="11" fill="${c}" opacity="0.9"/>
+      ${arrows}</svg>`;
+  }
+  function silHips(state){
+    const c=state==='red'?'#ff4055':state==='gold'?'#e8c87a':'#7ed18f';
+    const arrows=`<path d="M22 60 L33 60 M29 56 L33 60 L29 64" stroke="${c}" stroke-width="2.5" fill="none"/>
+         <path d="M78 60 L67 60 M71 56 L67 60 L71 64" stroke="${c}" stroke-width="2.5" fill="none"/>`;
+    return `<svg viewBox="0 0 100 130">
+      <path d="M30 6 Q50 2 70 6 L68 34 Q50 40 32 34 Z" fill="#2a2a2a"/>
+      <path d="M34 36 Q32 56 36 64 Q50 72 64 64 Q68 56 66 36 Q50 42 34 36 Z" fill="${c}" opacity="0.85"/>
+      <path d="M40 66 L36 120 L46 120 L50 74 L54 120 L64 120 L60 66 Z" fill="#222"/>
+      ${state!=='green'?arrows:''}</svg>`;
+  }
+  function silBody(state){
+    const c=state==='red'?'#ff4055':state==='gold'?'#e8c87a':'#7ed18f';
+    return `<svg viewBox="0 0 100 130">
+      <circle cx="50" cy="14" r="9" fill="#2a2a2a"/>
+      <path d="M36 26 Q50 22 64 26 L62 60 Q50 66 38 60 Z" fill="#262626"/>
+      <path d="M38 58 Q36 72 40 80 Q50 86 60 80 Q64 72 62 58 Q50 64 38 58 Z" fill="${c}" opacity="0.8"/>
+      <path d="M42 82 L38 122 L47 122 L50 88 L53 122 L62 122 L58 82 Z" fill="#222"/></svg>`;
+  }
+
+  // --- секции „што да поправиш“ (макс 3, по приоритет) ---
+  const fixCards=[];
+  const valg=hasErr('sqValgus'), hipE=hasErr('sqHipShift'), leanE=hasErr('sqLean');
+  if(valg)fixCards.push({n:fixCards.length+1,col:'#ff4055',bg:'rgba(255,64,85,.15)',
+    title:'КОЛЕНА (НАВНАТРЕ)',sil:silLegs('red'),
+    text:'Обиди се да ги држиш колената во линија со прстите на стапалата. Активирај ги глутеусите и притискај ги колената надвор.'});
+  if(leanE)fixCards.push({n:fixCards.length+1,col:'#ff4055',bg:'rgba(255,64,85,.15)',
+    title:'ДОЛЕН ДЕЛ ОД ГРБ',sil:silBody('red'),
+    text:'Држи ги градите горе и грбот неутрален низ целото движење. Стегни го јадрото пред да се спуштиш.'});
+  // колкови: жолто ако има, инаку зелено како „во ред“
+  fixCards.push(hipE
+    ?{n:fixCards.length+1,col:'#e8c87a',bg:'rgba(232,200,122,.15)',title:'КОЛКОВИ (ФРОНТАЛЕН ДЕЛ)',sil:silHips('gold'),
+      text:'Карлицата се поместува на една страна. Држи ја стабилна и спуштај се рамномерно на двете нозе.'}
+    :{n:fixCards.length+1,col:'#7ed18f',bg:'rgba(126,209,143,.15)',title:'КОЛКОВИ (ФРОНТАЛЕН ДЕЛ)',sil:silHips('green'),
+      text:'Немаш голема грешка тука, само одржувај ја карлицата стабилна во долната позиција.'});
+  // последна позитивна картичка
+  fixCards.push({n:fixCards.length+1,col:'#7ed18f',bg:'rgba(126,209,143,.15)',
+    title:'ПРОДОЛЖИ СО ДОБРАТА РАБОТА',sil:silBody('green'),
+    text:'Длабочината, долниот дел од грбот, тежиштето и темпото се одлични. Задржи го овој стандард!'});
+  const fixHTML=fixCards.slice(0,4).map(f=>`
+    <div class="srFix">
+      <div class="srFixNum" style="background:${f.bg};color:${f.col}">${f.n}</div>
+      <div class="srFixBody">
+        <div class="srFixTitle" style="color:${f.col}">${f.title}</div>
+        <div class="srFixText">${f.text}</div>
+      </div>
+      <div class="srFixSil">${f.sil}</div>
+    </div>`).join('');
+
+  // --- резиме редови ---
+  const sumRows=[
+    {ic:'⤓',t:'ДЛАБОЧИНА',d:R.depthPct>=70?'Добра длабочина постигната.':'Спуштај се подлабоко.',ok:R.depthPct>=70},
+    valg?{ic:'⫩',t:'КОЛЕНА (НАВНАТРЕ)',d:'Премногу движење на колената навнатре.',stat:'ТРЕБА ДА ПОПРАВИШ',col:'#ff4055'}:null,
+    {ic:'⊓',t:'КОЛКОВИ (ФРОНТАЛЕН ДЕЛ)',d:hipE?'Латерално поместување на карлицата.':'Мала нестабилност, во рамки на прифатливо.',stat:hipE?'ТРЕБА ДА ПОПРАВИШ':'ДОБРО',col:hipE?'#ff4055':'#e8c87a'},
+    {ic:'║',t:'ДОЛЕН ДЕЛ ОД ГРБ',d:leanE?'Грбот се заоблува/наведнува.':'Добра контрола и неутрална позиција.',ok:!leanE,stat:leanE?'ТРЕБА ДА ПОПРАВИШ':null,col:leanE?'#ff4055':null},
+    {ic:'⏚',t:'СТАПАЛА / ТЕЖИШТЕ',d:hasErr('sqHeel')?'Петиците се креваат.':'Тежиштето беше стабилно.',ok:!hasErr('sqHeel')},
+    {ic:'◷',t:'ТЕМПО',d:`${tempo==='добро'?'Добро темпо.':tempo==='брзо'?'Малку брзо.':'Контролирано темпо.'}`,ok:tempo!=='брзо'}
+  ].filter(Boolean);
+  const sumHTML=sumRows.map(r=>`
+    <div class="srItem">
+      <div class="srIcon">${r.ic}</div>
+      <div class="srItemTxt"><b style="${r.col?`color:${r.col}`:''}">${r.t}</b><span>${r.d}</span></div>
+      ${r.stat?`${wn(r.col||'#e8c87a')}${r.stat}</span>`:(r.ok?ck:ck)}
+    </div>`).join('');
+
+  // --- детални метрики ---
+  const mtag=(ok,warn)=>ok?'#7ed18f':warn?'#e8c87a':'#ff4055';
+  const valgDeg=Math.round(R.avgKneeOver*60); // приближен степен за приказ
+  const metrics=[
+    {l:'ПРОСЕЧНА ДЛАБОЧИНА',v:R.depthPct+'%',tag:R.depthPct>=70?'ОДЛИЧНО':'ПЛИТКО',c:mtag(R.depthPct>=70,R.depthPct>=55)},
+    {l:'ДВИЖЕЊЕ КОЛЕНА НАВНАТРЕ',v:(valg?valg.reps:0)+'/'+R.n,tag:valg?'ВИСОКО':'НИСКО',c:mtag(!valg,false)},
+    {l:'СТАБИЛНОСТ КОЛКОВИ',v:R.stability+'%',tag:R.stability>=80?'ДОБРО':'СРЕДНО',c:mtag(R.stability>=80,R.stability>=60)},
+    {l:'ПРОСЕЧЕН НАКЛОН ТРУП',v:Math.round(Math.abs(R.errList.find(e=>e.key==='sqLean')?22:R.avgMinKnee>100?14:18))+'°',tag:'ДОБРО',c:'#7ed18f'},
+    {l:'ТЕМПО (ЕКСЦЕНТРИЧНА)',v:R.avgDurS.toFixed(1),tag:'ДОБРО',c:'#7ed18f',unit:'сек'},
+    {l:'ПРОСЕЧЕН CONFIDENCE',v:R.avgConf+'%',tag:R.avgConf>=70?'ДОБРО':'НИСКО',c:mtag(R.avgConf>=70,R.avgConf>=55)}
+  ];
+  const metricsHTML=metrics.map(m=>`
+    <div class="srMetric">
+      <div class="mLabel">${m.l}</div>
+      <div class="mVal" style="color:${m.c}">${m.v}${m.unit?`<span style="font-size:11px"> ${m.unit}</span>`:''}</div>
+      <div class="mTag" style="color:${m.c}">${m.tag}</div>
+    </div>`).join('');
+
+  // кружен прогрес (stroke-dasharray)
+  const circ=2*Math.PI*52;
+  const dash=(R.tech/100)*circ;
+
+  const box=document.createElement('div');
+  box.id='setReport';
+  box.innerHTML=`
+    <div class="srWrap">
+      <div class="srTitle">По завршување на ${R.n} повторувања</div>
+      <div class="srTitleSub">Детална анализа</div>
+
+      <div class="srPanel gold">
+        <div class="srTop">
+          <div class="srDone"><b>Серијата е завршена</b><span>${R.n} / ${R.n} повторувања</span></div>
+          <span class="srCheck" style="background:rgba(126,209,143,.18);color:#7ed18f;width:34px;height:34px;font-size:18px">✓</span>
+        </div>
+        <div class="srRing">
+          <svg width="120" height="120">
+            <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="9"/>
+            <circle cx="60" cy="60" r="52" fill="none" stroke="${ringColor}" stroke-width="9"
+              stroke-linecap="round" stroke-dasharray="${dash} ${circ}"/>
+          </svg>
+          <div class="srRingTxt"><b style="color:${ringColor}">${R.tech}%</b><span>Техника</span>
+            <div class="grd" style="color:${ringColor}">${gradeWord}</div></div>
+        </div>
+        <div class="srPanelHead">Резиме на твојата техника</div>
+        ${sumHTML}
+        <div class="srConfRow"><span>Просечен Confidence</span><b>${R.avgConf}%</b></div>
+        <div class="srNote">* Анализата се базира на просечните вредности од сите ${R.n} повторувања.</div>
+      </div>
+
+      <div class="srPanel">
+        <div class="srPanelHead" style="color:var(--gold)">Што да поправиш следно</div>
+        ${fixHTML}
+      </div>
+
+      <div class="srPanel">
+        <div class="srPanelHead" style="color:var(--gold)">Детални метрики</div>
+        <div class="srMetrics">${metricsHTML}</div>
+      </div>
+
+      <div class="srBtns"><button id="srClose">Продолжи</button></div>
+    </div>`;
+  document.body.appendChild(box);
+  document.getElementById('srClose').addEventListener('click',()=>box.remove());
+}
+
+function sizeCanvas(){
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  canvas.width=window.innerWidth*dpr;
+  canvas.height=window.innerHeight*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize',sizeCanvas);
+sizeCanvas();
+
+function onResults(results){
+  const t=performance.now();
+  const dt=Math.min(64,t-lastTs);
+  lastTs=t;
+
+  computeFit();
+  const cw=window.innerWidth,ch=window.innerHeight;
+
+  ctx.clearRect(0,0,cw,ch);
+  ctx.save();
+  ctx.translate(cw,0);ctx.scale(-1,1);
+  ctx.drawImage(results.image,fit.offX,fit.offY,fit.vw*fit.scale,fit.vh*fit.scale);
+  ctx.restore();
+
+  if(!results.poseLandmarks){
+    neutral('Барам тело…');
+    FormErrors.draw(ctx,dt,t);
+    return;
+  }
+
+  toScreenPts(results.poseLandmarks);
+  const hipMidY=(pts[LM.HIP_L].y+pts[LM.HIP_R].y)/2;
+  if(prevHipY==null)prevHipY=hipMidY;
+  hipVelY=ema('hipVel',hipMidY-prevHipY);
+  prevHipY=hipMidY;
+
+  // одбројување на суспензијата (по златна зона)
+  if(errorSuppress>0)errorSuppress--;
+
+  // --- ФАЗА 1: setup gate (само за чучањ; другите вежби директно) ---
+  if(exerciseSel.value==='squat'){
+    detectView();                       // авто-детекција на поза секој кадар
+    if(viewBadge){
+      const pose=viewMode==='front'?'предна':'профил';
+      const cpct=Math.round(squatConfLast*100);
+      viewBadge.textContent=squatConfLast>0?`${pose} · ${cpct}%`:pose;
+    }
+    if(!checkSetup(t)){
+      drawSkeleton(false);              // прикажи скелет, но без детекција
+      FormErrors.draw(ctx,dt,t);
+      return;
+    }
+    // спремни → анализа според детектираната поза
+    if(viewMode==='front')analyzeSquatFront();
+    else analyzeSquat();
+  }else{
+    switch(exerciseSel.value){
+      case 'deadlift':analyzeDeadlift();break;
+      case 'curl':analyzeCurl();break;
+    }
+  }
+
+  drawSkeleton(squatGoldActive,exerciseSel.value==='squat');
+
+  const{anyVisible,topText,topCue,winner,activeErrs}=FormErrors.draw(ctx,dt,t);
+  Voice.update(activeErrs,t);   // глас: сите активни црвени грешки, спој со „и/and“
+  if(anyVisible&&topText){
+    setStatus(topText,topCue?'good':'bad');   // насока = злато, грешка = црвено
+  }else if(statusEl.classList.contains('bad')){
+    setStatus('Следам…','');
+  }
+}
+
+// =====================================================================
+// СТАРТ
+// =====================================================================
+async function start(){
+  if(running)return;
+  startBtn.disabled=true;
+  startBtn.textContent='Вчитувам…';
+
+  // (0) провери дали MediaPipe библиотеките се вчитани од CDN
+  if(typeof Pose==='undefined'||typeof Camera==='undefined'){
+    startBtn.disabled=false;
+    startBtn.textContent='Старт';
+    setStatus('Нема интернет за вчитување','bad');
+    return;
+  }
+
+  // (1) рана, јасна проверка за дозвола/HTTPS пред MediaPipe
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    startBtn.disabled=false;startBtn.textContent='Старт';
+    setStatus('Потребен е HTTPS за камера','bad');
+    return;
+  }
+
+  try{
+    pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`});
+    pose.setOptions({
+      modelComplexity:1,
+      smoothLandmarks:true,
+      minDetectionConfidence:0.6,
+      minTrackingConfidence:0.6
+    });
+    pose.onResults(onResults);
+
+    // Camera сам го отвора stream-от — не дуплираме getUserMedia (црн екран)
+    camera=new Camera(video,{
+      onFrame:async()=>{
+        if(video.readyState>=2){ try{await pose.send({image:video});}catch(e){} }
+      },
+      width:960,height:720
+    });
+    await camera.start();
+
+    // почекај видеото да добие реални димензии пред да продолжиме
+    if(!video.videoWidth){
+      await new Promise(res=>{
+        const tid=setTimeout(res,2000);
+        video.addEventListener('loadeddata',()=>{clearTimeout(tid);res();},{once:true});
+      });
+    }
+
+    running=true;
+    camStartTs=performance.now();
+    if(Voice.on&&window.speechSynthesis){
+      const warm=new SpeechSynthesisUtterance('');warm.volume=0;
+      window.speechSynthesis.speak(warm);
+    }
+    intro.classList.add('hide');
+    neutral('Намести се во кадар…');
+  }catch(e){
+    startBtn.disabled=false;
+    startBtn.textContent='Вклучи камера';
+    // ако браузерот само бара гест (автоматскиот обид е блокиран),
+    // не плаши го корисникот — само остани на „тапни за камера“
+    const needsGesture=e&&(e.name==='NotAllowedError'||e.name==='SecurityError');
+    if(needsGesture){
+      intro.classList.remove('hide');       // суптилен tap слој, без црвена грешка
+      return;
+    }
+    let msg='Камерата е недостапна';
+    if(e&&e.name==='NotFoundError')
+      msg='Нема пронајдена камера';
+    else if(location.protocol!=='https:'&&location.protocol!=='file:'&&
+            location.hostname!=='localhost')
+      msg='Потребен е HTTPS за камера';
+    setStatus(msg,'bad');
+    intro.classList.remove('hide');
+  }
+}
+
+exerciseSel.addEventListener('change',()=>{resetState();loadDemo(exerciseSel.value);});
+loadDemo(exerciseSel.value);   // вчитај го демото за почетната вежба
+resetBtn.addEventListener('click',resetState);
+soundBtn.addEventListener('click',()=>{
+  const on=!Voice.on;
+  Voice.setEnabled(on);
+  soundBtn.textContent=on?'🔊 Глас':'🔇 Глас';
+  soundBtn.classList.toggle('secondary',!on);
+  if(on)Voice.update(null,performance.now());
+});
+langBtn.addEventListener('click',()=>{
+  const next=Voice.lang==='mk'?'en':'mk';
+  Voice.setLang(next);
+  langBtn.textContent=next==='mk'?'МК':'EN';
+});
+startBtn.addEventListener('click',start);
+// тапни било каде на интро екранот за да стартува (не само копчето)
+intro.addEventListener('click',()=>{ if(!running)start(); });
+resetState();
+
+/* Обиди се ВЕДНАШ да ја пуштиш камерата на вчитување. Ако браузерот
+   го дозволи (десктоп, веќе дадена дозвола) → камерата тргнува сама,
+   без црн екран. Ако бара гест (повеќето мобилни прв пат) → останува
+   суптилниот „Тапни за камера“ слој, кој со еден допир продолжува.    */
+window.addEventListener('load',()=>{ setTimeout(()=>{ if(!running)start(); },150); });
+</script>
+</body>
+</html>
